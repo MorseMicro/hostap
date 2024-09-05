@@ -1,6 +1,7 @@
 /*
  * hostapd - command line interface for hostapd daemon
  * Copyright (c) 2004-2022, Jouni Malinen <j@w1.fi>
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -28,7 +29,8 @@ static int hostapd_cli_quit = 0;
 static int hostapd_cli_attached = 0;
 
 #ifndef CONFIG_CTRL_IFACE_DIR
-#define CONFIG_CTRL_IFACE_DIR "/var/run/hostapd"
+/* Morse Micro SW-5153. Update control interface to use _s1g for HaLow specific hostapd */
+#define CONFIG_CTRL_IFACE_DIR "/var/run/hostapd_s1g"
 #endif /* CONFIG_CTRL_IFACE_DIR */
 static const char *ctrl_iface_dir = CONFIG_CTRL_IFACE_DIR;
 static const char *client_socket_dir = NULL;
@@ -62,7 +64,7 @@ static void usage(void)
 		"   -h           help (show this usage text)\n"
 		"   -v           shown version information\n"
 		"   -p<path>     path to find control sockets (default: "
-		"/var/run/hostapd)\n"
+		"/var/run/hostapd_s1g)\n"
 		"   -s<dir_path> dir path to open client sockets (default: "
 		CONFIG_CTRL_IFACE_DIR ")\n"
 		"   -a<file>     run in daemon mode executing the action file "
@@ -1178,11 +1180,20 @@ static int hostapd_cli_cmd_chan_switch(struct wpa_ctrl *ctrl,
 	int total;
 
 	if (argc < 2) {
+#ifdef CONFIG_IEEE80211AH
+		printf("Invalid chan_switch command: needs at least five arguments "
+		       "(count, freq, prim_bandwidth, center_freq1 and bandwidth) for S1G "
+		       "frequency and at least two arguments (count and freq) for ht frequency\n"
+		       "usage: <cs_count> <freq> [prim_bandwidth=] [sec_channel_offset=] "
+		       "[center_freq1=] [center_freq2=] [bandwidth=] "
+		       "[blocktx] [ht|vht]\n");
+#else
 		printf("Invalid chan_switch command: needs at least two "
 		       "arguments (count and freq)\n"
 		       "usage: <cs_count> <freq> [sec_channel_offset=] "
 		       "[center_freq1=] [center_freq2=] [bandwidth=] "
 		       "[blocktx] [ht|vht|he|eht]\n");
+#endif /* CONFIG_IEEE80211AH */
 		return -1;
 	}
 
@@ -1696,10 +1707,17 @@ static const struct hostapd_cli_cmd hostapd_cli_commands[] = {
 	{ "send_qos_map_conf", hostapd_cli_cmd_send_qos_map_conf,
 	  hostapd_complete_stations,
 	  "<addr> = send QoS Map Configure frame" },
+#ifdef CONFIG_IEEE80211AH
+	{ "chan_switch", hostapd_cli_cmd_chan_switch, NULL,
+	  "<cs_count> <freq> [prim_bandwidth=] [sec_channel_offset=] [center_freq1=]\n"
+	  "  [center_freq2=] [bandwidth=] [blocktx] [ht|vht]\n"
+	  "  = initiate channel switch announcement" },
+#else
 	{ "chan_switch", hostapd_cli_cmd_chan_switch, NULL,
 	  "<cs_count> <freq> [sec_channel_offset=] [center_freq1=]\n"
 	  "  [center_freq2=] [bandwidth=] [blocktx] [ht|vht]\n"
 	  "  = initiate channel switch announcement" },
+#endif /* CONFIG_IEEE80211AH */
 	{ "notify_cw_change", hostapd_cli_cmd_notify_cw_change, NULL,
 	  "<channel_width> = 0 - 20 MHz, 1 - 40 MHz, 2 - 80 MHz, 3 - 160 MHz" },
 	{ "hs20_wnm_notif", hostapd_cli_cmd_hs20_wnm_notif, NULL,

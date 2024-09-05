@@ -3,12 +3,14 @@
  * Copyright (c) 2017, Qualcomm Atheros, Inc.
  * Copyright (c) 2018-2020, The Linux Foundation
  * Copyright (c) 2021-2022, Qualcomm Innovation Center, Inc.
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
  */
 
 #include "utils/includes.h"
+#include <openssl/pem.h>
 
 #include "utils/common.h"
 #include "utils/eloop.h"
@@ -30,6 +32,12 @@
 #include "notify.h"
 #include "dpp_supplicant.h"
 
+#ifdef CONFIG_DPP2
+#define DEFAULT_CHIRP_FOREVER_START_DELAY_S     (2)
+#endif
+#ifdef CONFIG_DPP3
+#define PUSH_BUTTON_CHIRP_FOREVER_START_DELAY_S (30)
+#endif
 
 static int wpas_dpp_listen_start(struct wpa_supplicant *wpa_s,
 				 unsigned int freq);
@@ -4724,10 +4732,16 @@ void wpas_dpp_stop(struct wpa_supplicant *wpa_s)
 }
 
 
+static void wpas_dpp_chirp_forever(void *eloop_ctx, void *timeout_ctx);
+static void wpas_dpp_chirp_forever_start_after(struct wpa_supplicant *wpa_s,
+	unsigned int secs);
+
 int wpas_dpp_init(struct wpa_supplicant *wpa_s)
 {
 	struct dpp_global_config config;
 	u8 adv_proto_id[7];
+	char *cmd;
+	int size;
 
 	adv_proto_id[0] = WLAN_EID_VENDOR_SPECIFIC;
 	adv_proto_id[1] = 5;
@@ -4746,6 +4760,54 @@ int wpas_dpp_init(struct wpa_supplicant *wpa_s)
 	config.remove_bi = wpas_dpp_remove_bi;
 #endif /* CONFIG_DPP2 */
 	wpa_s->dpp = dpp_global_init(&config);
+#ifdef CONFIG_DPP2
+	if (wpa_s->conf->dpp_key && wpa_s->dpp) {
+		BIO *bio;
+		EVP_PKEY *pkey;
+		EC_KEY *eckey;
+		int i;
+		unsigned char *der = NULL;
+		int der_len;
+		char *key;
+
+		bio = BIO_new_file(wpa_s->conf->dpp_key, "r");
+		if (!bio)
+			return -1;
+
+		pkey = PEM_read_bio_PrivateKey(bio, NULL, NULL,
+					       NULL);
+		BIO_free(bio);
+
+		eckey = EVP_PKEY_get1_EC_KEY(pkey);
+		if (!eckey)
+			return -1;
+
+		der_len = i2d_ECPrivateKey(eckey, &der);
+		if (der_len > 0) {
+			key = malloc((der_len * 2) + 1);
+			for (i = 0; i < der_len; i++)
+			{
+				sprintf((char*)(key + i * 2),"%02X", der[i]);
+			}
+			key[i*2] = '\0';
+		}
+
+		size = os_snprintf(NULL, 0, "type=qrcode mac="MACSTR" key=%s",
+			MAC2STR(wpa_s->own_addr), key);
+		cmd = malloc(size + 1);
+		os_snprintf(cmd, size+1, "type=qrcode mac="MACSTR" key=%s",
+			MAC2STR(wpa_s->own_addr), key);
+		dpp_bootstrap_gen(wpa_s->dpp, cmd);
+
+		OPENSSL_free(der);
+		EC_KEY_free(eckey);
+		EVP_PKEY_free(pkey);
+		free(key);
+		free(cmd);
+	}
+	wpas_dpp_chirp_forever_start_after(wpa_s,
+		DEFAULT_CHIRP_FOREVER_START_DELAY_S);
+#endif
 	return wpa_s->dpp ? 0 : -1;
 }
 
@@ -5016,6 +5078,7 @@ static int * wpas_dpp_presence_ann_channels(struct wpa_supplicant *wpa_s,
 	/* Preferred chirping channels */
 	mode = get_mode(wpa_s->hw.modes, wpa_s->hw.num_modes,
 			HOSTAPD_MODE_IEEE80211G, false);
+#if 0 // This channel is not flagged as disabled but kernel thinks it is when trying to send and cancels the chirp_forever
 	if (mode) {
 		for (c = 0; c < mode->num_channels; c++) {
 			struct hostapd_channel_data *chan = &mode->channels[c];
@@ -5029,7 +5092,7 @@ static int * wpas_dpp_presence_ann_channels(struct wpa_supplicant *wpa_s,
 	}
 	if (chan6)
 		int_array_add_unique(&freqs, 2437);
-
+#endif
 	mode = get_mode(wpa_s->hw.modes, wpa_s->hw.num_modes,
 			HOSTAPD_MODE_IEEE80211A, false);
 	if (mode) {
@@ -5037,14 +5100,33 @@ static int * wpas_dpp_presence_ann_channels(struct wpa_supplicant *wpa_s,
 
 		for (c = 0; c < mode->num_channels; c++) {
 			struct hostapd_channel_data *chan = &mode->channels[c];
+			int s1g_chan = 0;
+			static const int s1g_chirp_channels[] = {
+				/* 2MHz channels */
+				5190, 5230, 5270, 5310, 5510, 5550,
+				5630, 5670, 5755, 5795, 5835, 5875,
+				/* 1MHz channels */
+				5660, 5680, 5180, 5200, 5240, 5260,
+				5280, 5300, 5320, 5500, 5520, 5540,
+				5560, 5580, 5600, 5620, 5640, 5765,
+				5785, 5805, 5825, 5845, 5865, 5855
+			};
 
-			if (chan->flag & (HOSTAPD_CHAN_DISABLED |
-					  HOSTAPD_CHAN_RADAR))
+			if (chan->flag & (HOSTAPD_CHAN_DISABLED | HOSTAPD_CHAN_RADAR))
 				continue;
 			if (chan->freq == 5220)
 				chan44 = 1;
 			if (chan->freq == 5745)
 				chan149 = 1;
+
+			/* Morse - All 5GHz channels that are mapped to 1 MHz and 2 MHz.
+			 * Channels that aren't relevant to a regulatory domain will be
+			 * disabled and won't be included.
+			 */
+			for (s1g_chan = 0; s1g_chan < ARRAY_SIZE(s1g_chirp_channels); s1g_chan++) {
+				if (chan->freq == s1g_chirp_channels[s1g_chan])
+					int_array_add_unique(&freqs, chan->freq);
+			}
 		}
 		if (chan149)
 			int_array_add_unique(&freqs, 5745);
@@ -5146,7 +5228,8 @@ static void wpas_dpp_chirp_next(void *eloop_ctx, void *timeout_ctx)
 			wpa_s->dpp_chirp_freq = wpa_s->dpp_chirp_freqs[i];
 		} else {
 			wpa_s->dpp_chirp_iter--;
-			if (wpa_s->dpp_chirp_iter <= 0) {
+			if (wpa_s->dpp_chirp_iter <= 0 &&
+			    !wpa_s->conf->dpp_chirp_forever) {
 				wpa_printf(MSG_DEBUG,
 					   "DPP: Chirping iterations completed");
 				wpas_dpp_chirp_stop(wpa_s);
@@ -5176,6 +5259,18 @@ static void wpas_dpp_chirp_next(void *eloop_ctx, void *timeout_ctx)
 	wpas_dpp_chirp_start(wpa_s);
 }
 
+
+static void wpas_dpp_chirp_forever(void *eloop_ctx, void *timeout_ctx) {
+	struct wpa_supplicant *wpa_s = eloop_ctx;
+	(void)wpas_dpp_chirp(wpa_s, "dpp_chirp own=1");
+	return;
+}
+
+static void wpas_dpp_chirp_forever_start_after(struct wpa_supplicant *wpa_s,
+	unsigned int secs) {
+	if (wpa_s->conf->dpp_chirp_forever && !wpa_s->conf->ssid)
+		eloop_register_timeout(secs, 0,  wpas_dpp_chirp_forever, wpa_s, NULL);
+}
 
 int wpas_dpp_chirp(struct wpa_supplicant *wpa_s, const char *cmd)
 {
@@ -5608,42 +5703,61 @@ int wpas_dpp_push_button(struct wpa_supplicant *wpa_s, const char *cmd)
 
 	if (!wpa_s->dpp)
 		return -1;
-	wpas_dpp_push_button_stop(wpa_s);
+
 	wpas_dpp_stop(wpa_s);
 	wpas_dpp_chirp_stop(wpa_s);
+	eloop_cancel_timeout(wpas_dpp_chirp_forever, ELOOP_ALL_CTX, ELOOP_ALL_CTX);
 
 	os_get_reltime(&wpa_s->dpp_pb_time);
 
 	if (cmd &&
 	    (os_strstr(cmd, " role=configurator") ||
-	     os_strstr(cmd, " conf=")))
-		return wpas_dpp_push_button_configurator(wpa_s, cmd);
+	     os_strstr(cmd, " conf="))) {
+		res = wpas_dpp_push_button_configurator(wpa_s, cmd);
+		goto out;
+	}
 
 	wpa_s->dpp_pb_configurator = false;
 
 	wpa_s->dpp_pb_freq_idx = 0;
 
 	res = dpp_bootstrap_gen(wpa_s->dpp, "type=pkex");
-	if (res < 0)
-		return -1;
+	if (res < 0) {
+		res = -1;
+		goto out;
+	}
+
 	wpa_s->dpp_pb_bi = dpp_bootstrap_get_id(wpa_s->dpp, res);
-	if (!wpa_s->dpp_pb_bi)
-		return -1;
+	if (!wpa_s->dpp_pb_bi) {
+		res = -1;
+		goto out;
+	}
 
 	wpa_s->dpp_allowed_roles = DPP_CAPAB_ENROLLEE;
 	wpa_s->dpp_netrole = DPP_NETROLE_STA;
 	wpa_s->dpp_qr_mutual = 0;
 	wpa_s->dpp_pb_announcement =
 		dpp_build_pb_announcement(wpa_s->dpp_pb_bi);
-	if (!wpa_s->dpp_pb_announcement)
-		return -1;
+	if (!wpa_s->dpp_pb_announcement) {
+		res = -1;
+		goto out;
+	}
 
 	wpa_printf(MSG_DEBUG,
 		   "DPP: Scan to create channel list for PB discovery");
 	wpa_s->scan_req = MANUAL_SCAN_REQ;
 	wpa_s->scan_res_handler = wpas_dpp_pb_scan_res_handler;
 	wpa_supplicant_req_scan(wpa_s, 0, 0);
-	return 0;
+
+	res = 0;
+out:
+
+	/* If push button mode failed to start, restart the chirp forever timer */
+	if (res)
+		wpas_dpp_chirp_forever_start_after(wpa_s,
+			DEFAULT_CHIRP_FOREVER_START_DELAY_S);
+
+	return res;
 }
 
 
@@ -5696,6 +5810,9 @@ void wpas_dpp_push_button_stop(struct wpa_supplicant *wpa_s)
 		wpas_abort_ongoing_scan(wpa_s);
 		wpa_s->scan_res_handler = NULL;
 	}
+
+	wpas_dpp_chirp_forever_start_after(wpa_s,
+		PUSH_BUTTON_CHIRP_FOREVER_START_DELAY_S);
 }
 
 #endif /* CONFIG_DPP3 */

@@ -1,4 +1,16 @@
-BINALL=wpa_supplicant wpa_cli
+#
+# Copyright 2021 Morse Micro
+#
+
+BINALL=wpa_supplicant_s1g wpa_cli_s1g
+
+CONFIG_FILE=.config
+include $(CONFIG_FILE)
+CONFIG_FILE=
+
+ifndef CONFIG_NO_WPA_PASSPHRASE
+BINALL += wpa_passphrase_s1g
+endif
 
 ALL = $(BINALL)
 ALL += systemd/wpa_supplicant.service
@@ -9,7 +21,6 @@ ALL += dbus/fi.w1.wpa_supplicant1.service
 
 EXTRA_TARGETS=dynamic_eap_methods
 
-CONFIG_FILE=.config
 include ../src/build.rules
 
 ifdef CONFIG_BUILD_PASN_SO
@@ -27,7 +38,7 @@ endif
 ifndef CONFIG_NO_WPA_PASSPHRASE
 # add the dependency this way to allow CONFIG_NO_WPA_PASSPHRASE
 # being set in the config which is read by build.rules
-_all: wpa_passphrase
+_all: wpa_passphrase_s1g
 endif
 
 ifdef LIBS
@@ -58,6 +69,10 @@ ifneq ($(GITVER),)
 CFLAGS += -DGIT_VERSION_STR_POSTFIX=\"-$(GITVER)\"
 endif
 endif
+endif
+
+ifdef MORSE_VERSION
+CFLAGS += -DMORSE_VERSION_STR=\"$(MORSE_VERSION)\"
 endif
 
 ifdef CONFIG_TESTING_OPTIONS
@@ -106,6 +121,8 @@ OBJS += bss.o
 OBJS += eap_register.o
 OBJS += ../src/utils/common.o
 OBJS += ../src/utils/config.o
+OBJS += ../src/utils/morse.o
+OBJS += ../src/utils/morse_cli.o
 OBJS += ../src/utils/wpa_debug.o
 OBJS += ../src/utils/wpabuf.o
 OBJS += ../src/utils/bitfield.o
@@ -257,6 +274,10 @@ CFLAGS += -DCONFIG_IEEE80211R
 OBJS += ../src/rsn_supp/wpa_ft.o
 endif
 
+ifdef CONFIG_IEEE80211AH
+CFLAGS += -DCONFIG_IEEE80211AH
+endif
+
 ifdef CONFIG_MESH
 NEED_80211_COMMON=y
 NEED_AES_SIV=y
@@ -340,7 +361,20 @@ endif
 
 ifdef CONFIG_WNM
 CFLAGS += -DCONFIG_WNM
+CFLAGS += -DCONFIG_MORSE_WNM
 OBJS += wnm_sta.o
+endif
+
+ifdef CONFIG_S1G_TWT
+CFLAGS += -DCONFIG_S1G_TWT
+endif
+
+ifdef CONFIG_MORSE_STANDBY_MODE
+CFLAGS += -DCONFIG_MORSE_STANDBY_MODE
+endif
+
+ifdef CONFIG_MORSE_KEEP_ALIVE_OFFLOAD
+CFLAGS += -DCONFIG_MORSE_KEEP_ALIVE_OFFLOAD
 endif
 
 ifdef CONFIG_TDLS
@@ -1979,8 +2013,8 @@ wpa_priv: $(BCHECK) $(OBJS_priv)
 
 _OBJS_VAR := OBJS
 include ../src/objs.mk
-wpa_supplicant: $(BCHECK) $(OBJS) $(EXTRA_progs)
-	$(Q)$(LDO) $(LDFLAGS) -o wpa_supplicant $(OBJS) $(LIBS) $(EXTRALIBS)
+wpa_supplicant_s1g: $(BCHECK) $(OBJS) $(EXTRA_progs)
+	$(Q)$(LDO) $(LDFLAGS) -o wpa_supplicant_s1g $(OBJS) $(LIBS) $(EXTRALIBS)
 	@$(E) "  LD " $@
 
 _OBJS_VAR := OBJS_t
@@ -1997,14 +2031,14 @@ preauth_test: $(OBJS_t2)
 
 _OBJS_VAR := OBJS_p
 include ../src/objs.mk
-wpa_passphrase: $(OBJS_p)
-	$(Q)$(LDO) $(LDFLAGS) -o wpa_passphrase $(OBJS_p) $(LIBS_p) $(LIBS)
+wpa_passphrase_s1g: $(OBJS_p)
+	$(Q)$(LDO) $(LDFLAGS) -o wpa_passphrase_s1g $(OBJS_p) $(LIBS_p) $(LIBS)
 	@$(E) "  LD " $@
 
 _OBJS_VAR := OBJS_c
 include ../src/objs.mk
-wpa_cli: $(OBJS_c)
-	$(Q)$(LDO) $(LDFLAGS) -o wpa_cli $(OBJS_c) $(LIBS_c)
+wpa_cli_s1g: $(OBJS_c)
+	$(Q)$(LDO) $(LDFLAGS) -o wpa_cli_s1g $(OBJS_c) $(LIBS_c)
 	@$(E) "  LD " $@
 
 LIBCTRL += ../src/common/wpa_ctrl.o
@@ -2111,18 +2145,18 @@ eap_gpsk.so: $(SRC_EAP_GPSK)
 	$(Q)sed -e 's|\@BINDIR\@|$(BINDIR)|g' $< >$@
 	@$(E) "  sed" $<
 
-wpa_supplicant.exe: wpa_supplicant
+wpa_supplicant_s1g.exe: wpa_supplicant_s1g
 	mv -f $< $@
-wpa_cli.exe: wpa_cli
+wpa_cli_s1g.exe: wpa_cli_s1g
 	mv -f $< $@
-wpa_passphrase.exe: wpa_passphrase
+wpa_passphrase_s1g.exe: wpa_passphrase_s1g
 	mv -f $< $@
 win_if_list.exe: win_if_list
 	mv -f $< $@
 eapol_test.exe: eapol_test
 	mv -f $< $@
 
-WINALL=wpa_supplicant.exe wpa_cli.exe wpa_passphrase.exe win_if_list.exe
+WINALL=wpa_supplicant_s1g.exe wpa_cli_s1g.exe wpa_passphrase_s1g.exe win_if_list.exe
 
 windows-bin: $(WINALL)
 	$(STRIP) $(WINALL)
@@ -2314,3 +2348,4 @@ clean: common-clean
 	rm -f libwpa_client.so
 	rm -f libwpa_test1 libwpa_test2
 	rm -f wpa_passphrase
+	rm -f wpa_passphrase_s1g
