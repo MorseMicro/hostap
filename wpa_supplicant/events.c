@@ -1,6 +1,7 @@
 /*
  * WPA Supplicant - Driver event processing
  * Copyright (c) 2003-2019, Jouni Malinen <j@w1.fi>
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -51,6 +52,7 @@
 #include "mesh_mpm.h"
 #include "wmm_ac.h"
 #include "dpp_supplicant.h"
+#include "morse.h"
 
 
 #define MAX_OWE_TRANSITION_BSS_SELECT_COUNT 5
@@ -1604,11 +1606,15 @@ struct wpa_ssid * wpa_scan_res_match(struct wpa_supplicant *wpa_s,
 
 	if (debug_print) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "%d: " MACSTR
-			" ssid='%s' wpa_ie_len=%u rsn_ie_len=%u caps=0x%x level=%d freq=%d %s%s%s",
+			" ssid='%s' wpa_ie_len=%u rsn_ie_len=%u caps=0x%x level=%d %s=%d %s%s%s",
 			i, MAC2STR(bss->bssid),
 			wpa_ssid_txt(bss->ssid, bss->ssid_len),
 			wpa_ie_len, rsn_ie_len, bss->caps, bss->level,
-			bss->freq,
+#ifdef CONFIG_IEEE80211AH
+			"chan", morse_ht_freq_to_s1g_chan(bss->freq),
+#else
+			"freq", bss->freq,
+#endif
 			wpa_bss_get_vendor_ie(bss, WPS_IE_VENDOR_TYPE) ?
 			" wps" : "",
 			(wpa_bss_get_vendor_ie(bss, P2P_IE_VENDOR_TYPE) ||
@@ -2829,6 +2835,26 @@ static void wnm_process_assoc_resp(struct wpa_supplicant *wpa_s,
 			   " (protected keep-live required)" : "");
 		if (wpa_s->sme.bss_max_idle_period == 0)
 			wpa_s->sme.bss_max_idle_period = 1;
+
+#ifdef CONFIG_MORSE_KEEP_ALIVE_OFFLOAD
+		if (wpa_s->conf->vendor_keep_alive_offload) {
+			if (morse_set_keep_alive(wpa_s->ifname, wpa_s->sme.bss_max_idle_period, false) == 0) {
+				/* Successful in offloading... wpa supplicant does not need to offload */
+				wpa_s->no_keep_alive = 1;
+				wpa_printf(MSG_DEBUG, "morse: Keep-alive offload to firmware enabled (%s)",
+					wpa_s->ifname);
+			}
+		}
+
+		if (wpa_s->no_keep_alive) {
+			/* Nothing else to do, do not start timer */
+			return;
+		} else {
+			wpa_printf(MSG_DEBUG, "morse: Keep-alive offload to firmware disabled (%s)",
+				wpa_s->ifname);
+		}
+#endif
+
 		if (wpa_s->drv_flags & WPA_DRIVER_FLAGS_SME) {
 			eloop_cancel_timeout(wnm_bss_keep_alive, wpa_s, NULL);
 			 /* msec times 1000 */
@@ -3285,9 +3311,16 @@ static int wpa_supplicant_event_associnfo(struct wpa_supplicant *wpa_s,
 		wpa_hexdump(MSG_DEBUG, "beacon_ies",
 			    data->assoc_info.beacon_ies,
 			    data->assoc_info.beacon_ies_len);
-	if (data->assoc_info.freq)
-		wpa_dbg(wpa_s, MSG_DEBUG, "freq=%u MHz",
+	if (data->assoc_info.freq) {
+		wpa_dbg(wpa_s, MSG_DEBUG,
+#ifdef CONFIG_IEEE80211AH
+			"chan=%d",
+			morse_ht_freq_to_s1g_chan(data->assoc_info.freq));
+#else
+			"freq=%u MHz",
 			data->assoc_info.freq);
+#endif /* CONFIG_IEEE80211AH */
+	}
 
 	wpa_s->connection_set = 0;
 	if (data->assoc_info.req_ies && data->assoc_info.resp_ies) {
@@ -3314,6 +3347,9 @@ static int wpa_supplicant_event_associnfo(struct wpa_supplicant *wpa_s,
 				resp_elems.he_capabilities;
 			wpa_s->connection_eht = req_elems.eht_capabilities &&
 				resp_elems.eht_capabilities;
+			
+			if (resp_elems.aid)
+				wpa_sm_set_assoc_aid(wpa_s->wpa, WPA_GET_LE16(resp_elems.aid));
 			if (req_elems.rrm_enabled)
 				wpa_s->rrm.rrm_used = 1;
 		}
@@ -5035,12 +5071,15 @@ static void wpas_event_rx_mgmt_action(struct wpa_supplicant *wpa_s,
 		return;
 	}
 
+	/* QoS managment frames not supported by MM_IOT to reduce code size. */
+#ifndef MM_IOT
 	if (category == WLAN_ACTION_VENDOR_SPECIFIC_PROTECTED && plen > 4 &&
 	    WPA_GET_BE32(payload) == QM_ACTION_VENDOR_TYPE) {
 		wpas_handle_qos_mgmt_recv_action(wpa_s, mgmt->sa,
 						 payload + 4, plen - 4);
 		return;
 	}
+#endif
 
 	wpas_p2p_rx_action(wpa_s, mgmt->da, mgmt->sa, mgmt->bssid,
 			   category, payload, plen, freq);
@@ -5048,6 +5087,28 @@ static void wpas_event_rx_mgmt_action(struct wpa_supplicant *wpa_s,
 		mesh_mpm_action_rx(wpa_s, mgmt, len);
 }
 
+#if defined(CONFIG_MESH) && defined(CONFIG_IEEE80211AH)
+void wpa_supplicant_mesh_peer_event(void *ctx, u8 *peer_addr)
+{
+	struct wpa_supplicant *wpa_s = ctx;
+	struct wpa_ssid *ssid = wpa_s->current_ssid;
+	struct hostapd_data *hapd = wpa_s->ifmsh->bss[0];
+
+	if (!hapd) {
+		wpa_printf(MSG_ERROR, "%s: hostap data is NULL\n", __func__);
+		return;
+	}
+
+	if (!ssid || !ssid->mesh_dynamic_peering)
+		return;
+
+	/* Store the address */
+	memcpy(hapd->mesh_kickout_peer_addr, peer_addr, ETH_ALEN);
+	wpa_printf(MSG_INFO, "Kick out peer addr" MACSTR "\n",
+		MAC2STR(hapd->mesh_kickout_peer_addr));
+	mesh_mpm_kickout_peer(hapd);
+}
+#endif /* CONFIG_MESH && CONFIG_IEEE80211AH */
 
 static void wpa_supplicant_notify_avoid_freq(struct wpa_supplicant *wpa_s,
 					     union wpa_event_data *event)

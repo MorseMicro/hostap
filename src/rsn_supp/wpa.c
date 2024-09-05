@@ -2,6 +2,7 @@
  * WPA Supplicant - WPA state machine and EAPOL-Key processing
  * Copyright (c) 2003-2018, Jouni Malinen <j@w1.fi>
  * Copyright(c) 2015 Intel Deutschland GmbH
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -32,6 +33,7 @@
 #include "pmksa_cache.h"
 #include "wpa_i.h"
 #include "wpa_ie.h"
+#include "morse.h"
 
 
 static const u8 null_rsc[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
@@ -4727,6 +4729,17 @@ int wpa_sm_set_assoc_wpa_ie_default(struct wpa_sm *sm, u8 *wpa_ie,
 	return 0;
 }
 
+int wpa_sm_set_assoc_aid(struct wpa_sm *sm, u16 aid)
+{
+	if (sm == NULL)
+		return -1;
+
+	sm->aid = aid;
+
+	wpa_printf(MSG_DEBUG, "WPA Got aid %d", sm->aid);
+
+	return 0;
+}
 
 /**
  * wpa_sm_set_assoc_wpa_ie - Set own WPA/RSN IE from (Re)AssocReq

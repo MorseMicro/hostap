@@ -3,6 +3,7 @@
  * Copyright 2002-2003, Instant802 Networks, Inc.
  * Copyright 2005-2006, Devicescape Software, Inc.
  * Copyright (c) 2008-2012, Jouni Malinen <j@w1.fi>
+ * Copyright 2021 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -12,6 +13,7 @@
 
 #include "utils/common.h"
 #include "utils/eloop.h"
+#include "utils/morse.h"
 #include "common/ieee802_11_defs.h"
 #include "common/ieee802_11_common.h"
 #include "common/wpa_ctrl.h"
@@ -154,9 +156,15 @@ int hostapd_get_hw_features(struct hostapd_iface *iface)
 			if (feature->channels[j].flag & HOSTAPD_CHAN_DISABLED)
 				continue;
 
-			wpa_printf(MSG_MSGDUMP, "Allowed channel: mode=%d "
-				   "chan=%d freq=%d MHz max_tx_power=%d dBm%s",
+			wpa_printf(MSG_MSGDUMP, "Allowed channel: mode=%d chan=%d "
+#ifdef CONFIG_IEEE80211AH
+				   "5g_chan=%d "
+#endif
+				   "freq=%d MHz max_tx_power=%d dBm%s",
 				   feature->mode,
+#ifdef CONFIG_IEEE80211AH
+				   morse_ht_chan_to_s1g_chan(feature->channels[j].chan),
+#endif
 				   feature->channels[j].chan,
 				   feature->channels[j].freq,
 				   feature->channels[j].max_tx_power,
@@ -317,7 +325,10 @@ static int ieee80211n_check_40mhz_5g(struct hostapd_iface *iface,
 			wpa_printf(MSG_DEBUG,
 				   "Cannot switch PRI/SEC channels due to local constraint");
 		} else {
-			ieee80211n_switch_pri_sec(iface);
+			wpa_printf(MSG_DEBUG, "Switch of PRI/SEC channels is ignored!");
+			/* SW-4065: hostapd suggests to switch pri/sec. Ignore it!
+			 * ieee80211n_switch_pri_sec(iface);
+			 */
 		}
 	}
 
@@ -742,6 +753,9 @@ int hostapd_check_ht_capab(struct hostapd_iface *iface)
 	    !ieee80211ac_supported_vht_capab(iface))
 		return -1;
 #endif /* CONFIG_IEEE80211AC */
+#ifdef CONFIG_IEEE80211AH
+	iface->conf->no_pri_sec_switch = 1;
+#endif /* CONFIG_IEEE80211AH */
 	ret = ieee80211n_check_40mhz(iface);
 	if (ret)
 		return ret;
@@ -846,10 +860,11 @@ static int hostapd_is_usable_chan(struct hostapd_iface *iface,
 		return 1;
 
 	wpa_printf(MSG_INFO,
-		   "Frequency %d (%s) not allowed for AP mode, flags: 0x%x%s%s",
+		   "Frequency %d (%s) not allowed for AP mode, flags: 0x%x%s%s%s",
 		   frequency, primary ? "primary" : "secondary",
 		   chan->flag,
 		   chan->flag & HOSTAPD_CHAN_NO_IR ? " NO-IR" : "",
+		   chan->flag & HOSTAPD_CHAN_DISABLED ? " DISABLED" : "",
 		   chan->flag & HOSTAPD_CHAN_RADAR ? " RADAR" : "");
 
 	if (is_6ghz_freq(chan->freq) && (chan->flag & HOSTAPD_CHAN_NO_IR))
@@ -1186,7 +1201,15 @@ int hostapd_acs_completed(struct hostapd_iface *iface, int err)
 		iface->is_no_ir = false;
 		wpa_msg(iface->bss[0]->msg_ctx, MSG_INFO,
 			ACS_EVENT_COMPLETED "freq=%d channel=%d",
+#ifdef CONFIG_IEEE80211AH
+			morse_s1g_op_class_ht_chan_to_s1g_freq(iface->conf->s1g_op_class,
+					morse_ht_chan_to_ht_chan_center(iface->conf, iface->conf->channel)),
+			morse_ht_chan_to_s1g_chan(
+					morse_ht_chan_to_ht_chan_center(
+							iface->conf, iface->conf->channel)));
+#else
 			iface->freq, iface->conf->channel);
+#endif
 		break;
 	case HOSTAPD_CHAN_ACS:
 		wpa_printf(MSG_ERROR, "ACS error - reported complete, but no result available");

@@ -1,6 +1,7 @@
 /*
  * Wrapper functions for libwolfssl
  * Copyright (c) 2004-2017, Jouni Malinen <j@w1.fi>
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -2120,6 +2121,7 @@ static struct crypto_ecdh * _crypto_ecdh_init(int group)
 #endif /* ECC_TIMING_RESISTANT && !WOLFSSL_OLD_FIPS */
 
 	return ecdh;
+
 fail:
 	crypto_ecdh_deinit(ecdh);
 	return NULL;
@@ -2178,7 +2180,6 @@ struct crypto_ecdh * crypto_ecdh_init2(int group, struct crypto_ec_key *own_key)
 
 	return ret;
 }
-
 
 void crypto_ecdh_deinit(struct crypto_ecdh *ecdh)
 {

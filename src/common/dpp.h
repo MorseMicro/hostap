@@ -3,6 +3,7 @@
  * Copyright (c) 2017, Qualcomm Atheros, Inc.
  * Copyright (c) 2018-2020, The Linux Foundation
  * Copyright (c) 2021-2022, Qualcomm Innovation Center, Inc.
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -659,6 +660,7 @@ int dpp_check_attrs(const u8 *buf, size_t len);
 int dpp_key_expired(const char *timestamp, os_time_t *expiry);
 const char * dpp_akm_str(enum dpp_akm akm);
 const char * dpp_akm_selector_str(enum dpp_akm akm);
+int dpp_akm_from_hapd_wpa_key(int wpa_key_mgmt);
 int dpp_configurator_get_key(const struct dpp_configurator *conf, char *buf,
 			     size_t buflen);
 void dpp_configurator_free(struct dpp_configurator *conf);

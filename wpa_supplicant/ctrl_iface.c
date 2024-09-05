@@ -1,6 +1,7 @@
 /*
  * WPA Supplicant / Control interface (shared code for all backends)
  * Copyright (c) 2004-2020, Jouni Malinen <j@w1.fi>
+ * Copyright 2023 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -2331,9 +2332,15 @@ static int wpa_supplicant_ctrl_iface_status(struct wpa_supplicant *wpa_s,
 			pos += ap_ctrl_iface_wpa_get_status(wpa_s, pos,
 							    end - pos,
 							    verbose);
-		} else
+		} else {
 #endif /* CONFIG_AP */
-		pos += wpa_sm_get_status(wpa_s->wpa, pos, end - pos, verbose);
+			if (wpa_s->ifmsh)
+				pos += mesh_iface_wpa_get_status(wpa_s, pos, end - pos);
+			else
+				pos += wpa_sm_get_status(wpa_s->wpa, pos, end - pos, verbose);
+#ifdef CONFIG_AP
+		}
+#endif /* CONFIG_AP */
 	}
 #ifdef CONFIG_SME
 #ifdef CONFIG_SAE

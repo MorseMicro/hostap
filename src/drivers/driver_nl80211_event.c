@@ -3,6 +3,7 @@
  * Copyright (c) 2002-2017, Jouni Malinen <j@w1.fi>
  * Copyright (c) 2007, Johannes Berg <johannes@sipsolutions.net>
  * Copyright (c) 2009-2010, Atheros Communications
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -20,6 +21,7 @@
 #include "common/ieee802_11_common.h"
 #include "driver_nl80211.h"
 
+#include "utils/morse.h"
 
 static void
 nl80211_control_port_frame_tx_status(struct wpa_driver_nl80211_data *drv,
@@ -1995,6 +1997,10 @@ static void send_scan_event(struct wpa_driver_nl80211_data *drv, int aborted,
 	if (tb[NL80211_ATTR_SCAN_FREQUENCIES]) {
 		char msg[MAX_REPORT_FREQS * 5 + 1], *pos, *end;
 		int res;
+		int ht_freq;
+#ifdef CONFIG_IEEE80211AH
+		int s1g_freq;
+#endif /* CONFIG_IEEE80211AH */
 
 		pos = msg;
 		end = pos + sizeof(msg);
@@ -2002,7 +2008,8 @@ static void send_scan_event(struct wpa_driver_nl80211_data *drv, int aborted,
 
 		nla_for_each_nested(nl, tb[NL80211_ATTR_SCAN_FREQUENCIES], rem)
 		{
-			freqs[num_freqs] = nla_get_u32(nl);
+			ht_freq = nla_get_u32(nl);
+			freqs[num_freqs] = ht_freq;
 			res = os_snprintf(pos, end - pos, " %d",
 					  freqs[num_freqs]);
 			if (!os_snprintf_error(end - pos, res))
@@ -2014,7 +2021,11 @@ static void send_scan_event(struct wpa_driver_nl80211_data *drv, int aborted,
 		info->freqs = freqs;
 		info->num_freqs = num_freqs;
 		msg[sizeof(msg) - 1] = '\0';
+#ifdef CONFIG_IEEE80211AH
+		wpa_printf(MSG_DEBUG, "nl80211: Scan included (5 GHz mapped) frequencies:%s",
+#else
 		wpa_printf(MSG_DEBUG, "nl80211: Scan included frequencies:%s",
+#endif /* CONFIG_IEEE80211AH */
 			   msg);
 	}
 
@@ -3317,6 +3328,16 @@ static void nl80211_vendor_event(struct wpa_driver_nl80211_data *drv,
 		nl80211_vendor_event_brcm(drv, subcmd, data, len);
 		break;
 #endif /* CONFIG_DRIVER_NL80211_BRCM */
+#if defined(CONFIG_MESH) && defined(CONFIG_IEEE80211AH)
+	case MORSE_OUI:
+		if (subcmd == MORSE_VENDOR_EVENT_MESH_PEER_ADDR) {
+			u8 *peer_addr = nla_data((struct nlattr *) data);
+
+			if (peer_addr)
+				wpa_supplicant_mesh_peer_event(drv->ctx, peer_addr);
+		}
+		break;
+#endif
 	default:
 		wpa_printf(MSG_DEBUG, "nl80211: Ignore unsupported vendor event");
 		break;

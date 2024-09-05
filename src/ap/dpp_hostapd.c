@@ -3,6 +3,7 @@
  * Copyright (c) 2017, Qualcomm Atheros, Inc.
  * Copyright (c) 2018-2020, The Linux Foundation
  * Copyright (c) 2021-2022, Qualcomm Innovation Center, Inc.
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -1709,6 +1710,11 @@ hostapd_dpp_rx_presence_announcement(struct hostapd_data *hapd, const u8 *src,
 	if (!auth)
 		return;
 	hostapd_dpp_set_testing_options(hapd, auth);
+
+	/* If dpp_configurator_params is not set, lets try configurator=1 */
+	if (!hapd->dpp_configurator_params)
+		hapd->dpp_configurator_params = strdup("configurator=1");
+
 	if (dpp_set_configurator(auth,
 				 hapd->dpp_configurator_params) < 0) {
 		dpp_auth_deinit(auth);
@@ -3070,6 +3076,7 @@ hostapd_dpp_gas_req_handler(struct hostapd_data *hapd, const u8 *sa,
 {
 	struct dpp_authentication *auth = hapd->dpp_auth;
 	struct wpabuf *resp;
+	int akm;
 
 	wpa_printf(MSG_DEBUG, "DPP: GAS request from " MACSTR, MAC2STR(sa));
 	if (!auth || (!auth->auth_success && !auth->reconfig_success) ||
@@ -3101,6 +3108,33 @@ hostapd_dpp_gas_req_handler(struct hostapd_data *hapd, const u8 *sa,
 		    query, query_len);
 	wpa_msg(hapd->msg_ctx, MSG_INFO, DPP_EVENT_CONF_REQ_RX "src=" MACSTR,
 		MAC2STR(sa));
+
+	/* Update station configuration to match the AP requirements */
+	akm = dpp_akm_from_hapd_wpa_key(hapd->conf->wpa_key_mgmt);
+	if (akm == DPP_AKM_UNKNOWN) {
+		wpa_printf(MSG_DEBUG,
+			"DPP: unsupported AKM for DPP flow, using connector as default");
+		akm = DPP_AKM_DPP;
+	}
+	auth->conf_sta =
+		dpp_configuration_alloc(dpp_akm_str(akm));
+
+	auth->conf_sta->netrole = DPP_NETROLE_STA;
+
+	os_memcpy(auth->conf_sta->ssid,
+		  hapd->conf->ssid.ssid,
+		  hapd->conf->ssid.ssid_len);
+	auth->conf_sta->ssid_len = hapd->conf->ssid.ssid_len;
+
+	if (dpp_akm_psk(akm) || dpp_akm_sae(akm)) {
+		if (!hapd->conf->sae_passwords ||
+		    !hapd->conf->sae_passwords->password) {
+			wpa_printf(MSG_DEBUG, "DPP: SAE passphrase is missing");
+			return NULL;
+		}
+		auth->conf_sta->passphrase = os_strdup(hapd->conf->sae_passwords->password);
+	}
+
 	resp = dpp_conf_req_rx(auth, query, query_len);
 	if (!resp)
 		wpa_msg(hapd->msg_ctx, MSG_INFO, DPP_EVENT_CONF_FAILED);

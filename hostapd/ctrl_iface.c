@@ -1,6 +1,7 @@
 /*
  * hostapd / UNIX domain socket -based control interface
  * Copyright (c) 2004-2018, Jouni Malinen <j@w1.fi>
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -68,6 +69,8 @@
 #include "fst/fst_ctrl_iface.h"
 #include "config_file.h"
 #include "ctrl_iface.h"
+#include "config_file.h"
+#include "utils/morse.h"
 
 
 #define HOSTAPD_CLI_DUP_VALUE_MAX_LEN 256
@@ -83,6 +86,7 @@ static void hostapd_ctrl_iface_send(struct hostapd_data *hapd, int level,
 				    enum wpa_msg_type type,
 				    const char *buf, size_t len);
 
+static char *reload_opts = NULL;
 
 static int hostapd_ctrl_iface_attach(struct hostapd_data *hapd,
 				     struct sockaddr_storage *from,
@@ -134,6 +138,61 @@ static int hostapd_ctrl_iface_new_sta(struct hostapd_data *hapd,
 	return 0;
 }
 
+static char *get_option(char *opt, char *str)
+{
+	int len = strlen(str);
+
+	if (!strncmp(opt, str, len))
+		return opt + len;
+	else
+		return NULL;
+}
+
+static struct hostapd_config *hostapd_ctrl_iface_config_read(const char *fname)
+{
+	struct hostapd_config *conf;
+	char *opt, *val;
+
+	conf = hostapd_config_read(fname);
+	if (!conf)
+		return NULL;
+
+	for (opt = strtok(reload_opts, " ");
+	     opt;
+		 opt = strtok(NULL, " ")) {
+
+		if ((val = get_option(opt, "channel=")))
+			conf->channel = atoi(val);
+		else if ((val = get_option(opt, "ht_capab=")))
+			conf->ht_capab = atoi(val);
+		else if ((val = get_option(opt, "ht_capab_mask=")))
+			conf->ht_capab &= atoi(val);
+		else if ((val = get_option(opt, "sec_chan=")))
+			conf->secondary_channel = atoi(val);
+		else if ((val = get_option(opt, "hw_mode=")))
+			conf->hw_mode = atoi(val);
+		else if ((val = get_option(opt, "ieee80211n=")))
+			conf->ieee80211n = atoi(val);
+		else
+			break;
+	}
+
+	return conf;
+}
+
+static int hostapd_ctrl_iface_update(struct hostapd_data *hapd, char *txt)
+{
+	struct hostapd_config * (*config_read_cb)(const char *config_fname);
+	struct hostapd_iface *iface = hapd->iface;
+
+	config_read_cb = iface->interfaces->config_read_cb;
+	iface->interfaces->config_read_cb = hostapd_ctrl_iface_config_read;
+	reload_opts = txt;
+
+	hostapd_reload_config(iface, 0);
+
+	iface->interfaces->config_read_cb = config_read_cb;
+}
 
 #ifdef NEED_AP_MLME
 static int hostapd_ctrl_iface_sa_query(struct hostapd_data *hapd,
@@ -2631,10 +2690,32 @@ static int hostapd_ctrl_iface_chan_switch(struct hostapd_iface *iface,
 	unsigned int i;
 	int bandwidth;
 	u8 chan;
+	u8 is_s1g_freq = 0;
 
 	ret = hostapd_parse_csa_settings(pos, &settings);
 	if (ret)
 		return ret;
+
+	/* Check if input frequency is s1g_frequency.
+	 * This check is necessary for interoperability with
+	 * ht frequencies as input. If the input is S1G frequency
+	 * then we do S1G to ht frequency conversions later
+	 */
+	if (settings.freq_params.center_freq1 >  MIN_S1G_FREQ_KHZ &&
+		settings.freq_params.center_freq1 < MAX_S1G_FREQ_KHZ &&
+		settings.freq_params.freq >  MIN_S1G_FREQ_KHZ &&
+		settings.freq_params.freq < MAX_S1G_FREQ_KHZ)
+	{
+		is_s1g_freq = 1;
+	}
+#ifdef CONFIG_IEEE80211AH
+	if (is_s1g_freq)
+	{
+		ret = morse_s1g_validate_csa_params(iface, &settings);
+		if (ret)
+			return ret;
+	}
+#endif /* CONFIG_IEEE80211AH */
 
 	ret = hostapd_ctrl_check_freq_params(&settings.freq_params,
 					     settings.punct_bitmap);
@@ -2707,6 +2788,17 @@ static int hostapd_ctrl_iface_chan_switch(struct hostapd_iface *iface,
 		/* Save CHAN_SWITCH VHT, HE, and EHT config */
 		hostapd_chan_switch_config(iface->bss[i],
 					   &settings.freq_params);
+
+#ifdef CONFIG_IEEE80211AH
+		if (is_s1g_freq)
+			morse_set_ecsa_params(iface->conf->bss[i]->iface,
+					settings.s1g_freq_params.s1g_global_op_class,
+					settings.s1g_freq_params.s1g_prim_bw,
+					settings.s1g_freq_params.s1g_oper_bw,
+					settings.s1g_freq_params.s1g_oper_freq,
+					settings.s1g_freq_params.s1g_prim_channel_index_1MHz,
+					settings.s1g_freq_params.s1g_prim_ch_global_op_class);
+#endif /* CONFIG_IEEE80211AH */
 
 		ret = hostapd_switch_channel(iface->bss[i], &settings);
 		if (ret) {
@@ -3724,6 +3816,8 @@ static int hostapd_ctrl_iface_receive_process(struct hostapd_data *hapd,
 	} else if (os_strncmp(buf, "VENDOR ", 7) == 0) {
 		reply_len = hostapd_ctrl_iface_vendor(hapd, buf + 7, reply,
 						      reply_size);
+	} else if (os_strncmp(buf, "UPDATE ", 7) == 0) {
+		hostapd_ctrl_iface_update(hapd, buf + 7);
 	} else if (os_strcmp(buf, "ERP_FLUSH") == 0) {
 		ieee802_1x_erp_flush(hapd);
 #ifdef RADIUS_SERVER

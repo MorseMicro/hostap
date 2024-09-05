@@ -1,6 +1,7 @@
 /*
  * WPA Supplicant - command line interface for wpa_supplicant daemon
  * Copyright (c) 2004-2022, Jouni Malinen <j@w1.fi>
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -44,7 +45,8 @@ static int wpa_cli_attached = 0;
 static int wpa_cli_connected = -1;
 static int wpa_cli_last_id = 0;
 #ifndef CONFIG_CTRL_IFACE_DIR
-#define CONFIG_CTRL_IFACE_DIR "/var/run/wpa_supplicant"
+/* Morse Micro SW-5153. Update control interface to use _s1g for HaLow specific wpa_supplicant */
+#define CONFIG_CTRL_IFACE_DIR "/var/run/wpa_supplicant_s1g"
 #endif /* CONFIG_CTRL_IFACE_DIR */
 static const char *ctrl_iface_dir = CONFIG_CTRL_IFACE_DIR;
 static const char *client_socket_dir = NULL;
@@ -1463,7 +1465,8 @@ static const char *network_fields[] = {
 	"no_auto_peer", "mesh_rssi_threshold",
 	"mesh_basic_rates", "dot11MeshMaxRetries",
 	"dot11MeshRetryTimeout", "dot11MeshConfirmTimeout",
-	"dot11MeshHoldingTimeout",
+	"dot11MeshHoldingTimeout", "dot11MeshHWMPRootMode",
+	"dot11MeshGateAnnouncements",
 #endif /* CONFIG_MESH */
 	"wpa_ptk_rekey", "bgscan", "ignore_broadcast_ssid",
 	"wpa_deny_ptk0_rekey",
@@ -1502,6 +1505,15 @@ static const char *network_fields[] = {
 	"update_identifier",
 #endif /* CONFIG_HS20 */
 	"mac_addr", "pbss", "wps_disabled"
+#ifdef CONFIG_IEEE80211AH
+	"cac",
+#endif
+#ifdef CONFIG_MORSE_STANDBY_MODE
+	"standby_session_dir",
+#endif
+#ifdef CONFIG_MORSE_KEEP_ALIVE_OFFLOAD
+	"vendor_keep_alive_offload",
+#endif
 };
 
 
