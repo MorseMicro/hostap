@@ -3,6 +3,7 @@
  * Copyright (c) 2017, Qualcomm Atheros, Inc.
  * Copyright (c) 2018-2020, The Linux Foundation
  * Copyright (c) 2021-2022, Qualcomm Innovation Center, Inc.
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -24,6 +25,9 @@
 #include "beacon.h"
 #include "dpp_hostapd.h"
 
+#if defined(CONFIG_IEEE80211AH)
+#include "morse.h"
+#endif
 
 static void hostapd_dpp_reply_wait_timeout(void *eloop_ctx, void *timeout_ctx);
 static void hostapd_dpp_auth_conf_wait_timeout(void *eloop_ctx,
@@ -257,9 +261,42 @@ static int hostapd_dpp_allow_ir(struct hostapd_data *hapd, unsigned int freq)
 }
 
 
+#if defined(CONFIG_IEEE80211AH)
+static int hostapd_s1g_preferred_ht_announce_freq(struct hostapd_data *hapd)
+{
+	/* From '6.2.2 Generation of Channel List for Presence Announcement' in
+	 * Easy Connect Specification v2.0.0.6.
+	 *
+	 * Sub-1 GHz: Channel 37 (920.5 MHz) if local regulations permit use of global
+	 * operating class 68 (ITU Region 2, Australia, New Zealand, Singapore)
+	 * otherwise Channel 1 (863.5 MHz) if local regulations permit use of
+	 * global operating class 66 (Europe)
+	 */
+	int global_op_class = morse_s1g_country_to_global_op_class(hapd->iface->conf->country);
+	int preferred_ann_chan_s1g =
+		(global_op_class == 68) ? 37 :
+		(global_op_class == 66) ? 1 : -1;
+	int ht_s1g_freq = ieee80211_channel_to_frequency(
+		morse_s1g_chan_to_ht_chan(preferred_ann_chan_s1g), NL80211_BAND_5GHZ);
+
+	/* S1G devices masquerading as 5G must convert back to a HT frequency */
+	return ht_s1g_freq;
+}
+#endif
+
 static int hostapd_dpp_pkex_next_channel(struct hostapd_data *hapd,
 					 struct dpp_pkex *pkex)
 {
+#if defined(CONFIG_IEEE80211AH)
+	int preferred_s1g_ht_freq = hostapd_s1g_preferred_ht_announce_freq(hapd);
+
+	if (preferred_s1g_ht_freq <= 0 || pkex->freq == (unsigned int) preferred_s1g_ht_freq)
+		return -1; /* no more channels to try */
+	else if (pkex->freq == 2437)
+		pkex->freq = preferred_s1g_ht_freq;
+	else
+		return -1;
+#else
 	if (pkex->freq == 2437)
 		pkex->freq = 5745;
 	else if (pkex->freq == 5745)
@@ -268,6 +305,7 @@ static int hostapd_dpp_pkex_next_channel(struct hostapd_data *hapd,
 		pkex->freq = 60480;
 	else
 		return -1; /* no more channels to try */
+#endif
 
 	if (hostapd_dpp_allow_ir(hapd, pkex->freq) == 1) {
 		wpa_printf(MSG_DEBUG, "DPP: Try to initiate on %u MHz",
@@ -405,6 +443,12 @@ static int hostapd_dpp_pkex_init(struct hostapd_data *hapd,
 	msg = hapd->dpp_pkex->exchange_req;
 	wait_time = 2000; /* TODO: hapd->max_remain_on_chan; */
 	pkex->freq = 2437;
+	if (!hostapd_dpp_allow_ir(hapd, pkex->freq)) {
+		if (hostapd_dpp_pkex_next_channel(hapd, pkex) < 0) {
+			wpa_printf(MSG_DEBUG, "DPP: Could not initiate (no channels to try)");
+			return -1;
+		}
+	}
 	wpa_msg(hapd->msg_ctx, MSG_INFO, DPP_EVENT_TX "dst=" MACSTR
 		" freq=%u type=%d", MAC2STR(broadcast), pkex->freq,
 		v2 ? DPP_PA_PKEX_EXCHANGE_REQ :
@@ -1716,6 +1760,11 @@ hostapd_dpp_rx_presence_announcement(struct hostapd_data *hapd, const u8 *src,
 	if (!auth)
 		return;
 	hostapd_dpp_set_testing_options(hapd, auth);
+
+	/* If dpp_configurator_params is not set, lets try configurator=1 */
+	if (!hapd->dpp_configurator_params)
+		hapd->dpp_configurator_params = strdup("configurator=1");
+
 	if (dpp_set_configurator(auth,
 				 hapd->dpp_configurator_params) < 0) {
 		dpp_auth_deinit(auth);
@@ -3077,6 +3126,7 @@ hostapd_dpp_gas_req_handler(struct hostapd_data *hapd, const u8 *sa,
 {
 	struct dpp_authentication *auth = hapd->dpp_auth;
 	struct wpabuf *resp;
+	int akm;
 
 	wpa_printf(MSG_DEBUG, "DPP: GAS request from " MACSTR, MAC2STR(sa));
 	if (!auth || (!auth->auth_success && !auth->reconfig_success) ||
@@ -3115,6 +3165,33 @@ hostapd_dpp_gas_req_handler(struct hostapd_data *hapd, const u8 *sa,
 		    query, query_len);
 	wpa_msg(hapd->msg_ctx, MSG_INFO, DPP_EVENT_CONF_REQ_RX "src=" MACSTR,
 		MAC2STR(sa));
+
+	/* Update station configuration to match the AP requirements */
+	akm = dpp_akm_from_hapd_wpa_key(hapd->conf->wpa_key_mgmt);
+	if (akm == DPP_AKM_UNKNOWN) {
+		wpa_printf(MSG_DEBUG,
+			"DPP: unsupported AKM for DPP flow, using connector as default");
+		akm = DPP_AKM_DPP;
+	}
+	auth->conf_sta =
+		dpp_configuration_alloc(dpp_akm_str(akm));
+
+	auth->conf_sta->netrole = DPP_NETROLE_STA;
+
+	os_memcpy(auth->conf_sta->ssid,
+		  hapd->conf->ssid.ssid,
+		  hapd->conf->ssid.ssid_len);
+	auth->conf_sta->ssid_len = hapd->conf->ssid.ssid_len;
+
+	if (dpp_akm_psk(akm) || dpp_akm_sae(akm)) {
+		if (!hapd->conf->sae_passwords ||
+		    !hapd->conf->sae_passwords->password) {
+			wpa_printf(MSG_DEBUG, "DPP: SAE passphrase is missing");
+			return NULL;
+		}
+		auth->conf_sta->passphrase = os_strdup(hapd->conf->sae_passwords->password);
+	}
+
 	resp = dpp_conf_req_rx(auth, query, query_len);
 	if (!resp)
 		wpa_msg(hapd->msg_ctx, MSG_INFO, DPP_EVENT_CONF_FAILED);

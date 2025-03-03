@@ -1,6 +1,7 @@
 /*
  * Control interface for shared AP commands
  * Copyright (c) 2004-2019, Jouni Malinen <j@w1.fi>
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -25,6 +26,7 @@
 #include "mbo_ap.h"
 #include "taxonomy.h"
 #include "wnm_ap.h"
+#include "morse.h"
 
 
 static size_t hostapd_write_ht_mcs_bitmask(char *buf, size_t buflen,
@@ -661,15 +663,18 @@ int hostapd_ctrl_iface_deauthenticate(struct hostapd_data *hapd,
 	}
 #endif /* CONFIG_P2P_MANAGER */
 
-	if (os_strstr(txtaddr, " tx=0"))
-		hostapd_drv_sta_remove(hapd, addr);
-	else
-		hostapd_drv_sta_deauth(hapd, addr, reason);
 	sta = ap_get_sta(hapd, addr);
-	if (sta)
-		ap_sta_deauthenticate(hapd, sta, reason);
-	else if (addr[0] == 0xff)
-		hostapd_free_stas(hapd);
+	if (os_strstr(txtaddr, " tx=0")) {
+		hostapd_drv_sta_remove(hapd, addr);
+		if (sta)
+			ap_free_sta(hapd, sta);
+	} else {
+		hostapd_drv_sta_deauth(hapd, addr, reason);
+		if (sta)
+			ap_sta_deauthenticate(hapd, sta, reason);
+		else if (addr[0] == 0xff)
+			hostapd_free_stas(hapd);
+	}
 
 	return 0;
 }
@@ -723,15 +728,18 @@ int hostapd_ctrl_iface_disassociate(struct hostapd_data *hapd,
 	}
 #endif /* CONFIG_P2P_MANAGER */
 
-	if (os_strstr(txtaddr, " tx=0"))
-		hostapd_drv_sta_remove(hapd, addr);
-	else
-		hostapd_drv_sta_disassoc(hapd, addr, reason);
 	sta = ap_get_sta(hapd, addr);
-	if (sta)
-		ap_sta_disassociate(hapd, sta, reason);
-	else if (addr[0] == 0xff)
-		hostapd_free_stas(hapd);
+	if (os_strstr(txtaddr, " tx=0")) {
+		hostapd_drv_sta_remove(hapd, addr);
+		if (sta)
+			ap_free_sta(hapd, sta);
+	} else {
+		hostapd_drv_sta_disassoc(hapd, addr, reason);
+		if (sta)
+			ap_sta_disassociate(hapd, sta, reason);
+		else if (addr[0] == 0xff)
+			hostapd_free_stas(hapd);
+	}
 
 	return 0;
 }
@@ -788,6 +796,26 @@ int hostapd_ctrl_iface_status(struct hostapd_data *hapd, char *buf,
 	struct hostapd_config *iconf = hapd->iconf;
 	int len = 0, ret, j;
 	size_t i;
+#ifdef CONFIG_IEEE80211AH
+	int ht_chan = morse_ht_chan_to_ht_chan_center(iface->conf, iface->conf->channel);
+	int s1g_freq = morse_s1g_op_class_ht_chan_to_s1g_freq(iface->conf->s1g_op_class, ht_chan);
+	int s1g_bw = morse_s1g_op_class_to_ch_width(iface->conf->s1g_op_class);
+
+	ret = os_snprintf(buf + len, buflen - len,
+			  "s1g_freq=%d\n"
+			  "s1g_bw=%d\n"
+			  "s1g_prim_chwidth=%d\n"
+			  "s1g_prim_1mhz_chan_index=%u\n",
+			  s1g_freq,
+			  s1g_bw,
+			  iface->conf->s1g_prim_chwidth == S1G_PRIM_CHWIDTH_1 ? 1 :
+				iface->conf->s1g_prim_chwidth == S1G_PRIM_CHWIDTH_2 ? 2 : -1,
+			  iface->conf->s1g_prim_1mhz_chan_index);
+	if (os_snprintf_error(buflen - len, ret))
+		return len;
+	len += ret;
+
+#endif /* CONFIG_IEEE80211AH */
 
 	ret = os_snprintf(buf + len, buflen - len,
 			  "state=%s\n"
@@ -1098,13 +1126,22 @@ int hostapd_parse_csa_settings(const char *pos,
 			       struct csa_settings *settings)
 {
 	char *end;
+	long chan_switch_count;
 
 	os_memset(settings, 0, sizeof(*settings));
-	settings->cs_count = strtol(pos, &end, 10);
+	chan_switch_count = strtol(pos, &end, 10);
 	if (pos == end) {
 		wpa_printf(MSG_ERROR, "chanswitch: invalid cs_count provided");
 		return -1;
 	}
+
+	if (chan_switch_count > UINT8_MAX) {
+		wpa_printf(MSG_ERROR, "chanswitch: invalid cs_count:%ld provided. Max=%u\n",
+			   chan_switch_count, UINT8_MAX);
+		return -1;
+	}
+
+	settings->cs_count = chan_switch_count;
 
 	settings->freq_params.freq = atoi(end);
 	if (settings->freq_params.freq == 0) {
@@ -1134,11 +1171,15 @@ int hostapd_parse_csa_settings(const char *pos,
 	SET_CSA_SETTING(center_freq2);
 	SET_CSA_SETTING(bandwidth);
 	SET_CSA_SETTING(sec_channel_offset);
+#ifdef CONFIG_IEEE80211AH
+	SET_CSA_SETTING(prim_bandwidth);
+#endif /* CONFIG_IEEE80211AH */
 	SET_CSA_SETTING_EXT(punct_bitmap);
 	settings->freq_params.ht_enabled = !!os_strstr(pos, " ht");
 	settings->freq_params.vht_enabled = !!os_strstr(pos, " vht");
-	settings->freq_params.he_enabled = !!os_strstr(pos, " he");
 	settings->freq_params.eht_enabled = !!os_strstr(pos, " eht");
+	settings->freq_params.he_enabled = !!os_strstr(pos, " he") ||
+		settings->freq_params.eht_enabled;
 	settings->block_tx = !!os_strstr(pos, " blocktx");
 #undef SET_CSA_SETTING
 #undef SET_CSA_SETTING_EXT
@@ -1149,7 +1190,13 @@ int hostapd_parse_csa_settings(const char *pos,
 
 int hostapd_ctrl_iface_stop_ap(struct hostapd_data *hapd)
 {
-	return hostapd_drv_stop_ap(hapd);
+	struct hostapd_iface *iface = hapd->iface;
+	unsigned int i;
+
+	for (i = 0; i < iface->num_bss; i++)
+		hostapd_drv_stop_ap(iface->bss[i]);
+
+	return 0;
 }
 
 

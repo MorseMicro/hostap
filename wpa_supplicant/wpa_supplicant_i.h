@@ -1,6 +1,7 @@
 /*
  * wpa_supplicant - Internal definitions
  * Copyright (c) 2003-2024, Jouni Malinen <j@w1.fi>
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -310,6 +311,9 @@ struct wpa_global {
 	unsigned int p2p_24ghz_social_channels:1;
 	unsigned int pending_p2ps_group:1;
 	unsigned int pending_group_iface_for_p2ps:1;
+#ifdef CONFIG_MORSE_KEEP_ALIVE_OFFLOAD
+	unsigned int vendor_keep_alive_offload:1;
+#endif
 	unsigned int pending_p2ps_group_freq;
 
 #ifdef CONFIG_WIFI_DISPLAY
@@ -319,6 +323,9 @@ struct wpa_global {
 #endif /* CONFIG_WIFI_DISPLAY */
 
 	struct psk_list_entry *add_psk; /* From group formation */
+#ifdef CONFIG_MORSE_STANDBY_MODE
+	char *standby_session_dir;
+#endif
 };
 
 
@@ -805,6 +812,7 @@ struct wpa_supplicant {
 	size_t last_scan_res_used;
 	size_t last_scan_res_size;
 	struct os_reltime last_scan;
+	bool last_scan_external;
 
 	const struct wpa_driver_ops *driver;
 	int interface_removed; /* whether the network interface has been
@@ -900,6 +908,7 @@ struct wpa_supplicant {
 	 * pending vendor scan request.
 	 */
 	u64 curr_scan_cookie;
+	u16 next_scan_dwell_duration;
 #define MAX_SCAN_ID 16
 	int scan_id[MAX_SCAN_ID];
 	unsigned int scan_id_count;
@@ -920,6 +929,7 @@ struct wpa_supplicant {
 	u64 drv_flags;
 	u64 drv_flags2;
 	unsigned int drv_enc;
+	unsigned int drv_key_mgmt;
 	unsigned int drv_rrm_flags;
 	unsigned int drv_max_acl_mac_addrs;
 
@@ -1300,13 +1310,15 @@ struct wpa_supplicant {
 	u8 *mac_addr_pno;
 
 #ifdef CONFIG_WNM
+	bool wnm_transition_scan;
 	u8 wnm_dialog_token;
 	u8 wnm_reply;
 	u8 wnm_num_neighbor_report;
 	u8 wnm_mode;
 	bool wnm_link_removal;
-	u8 wnm_dissoc_addr[ETH_ALEN];
-	u16 wnm_dissoc_timer;
+	bool wnm_disassoc_mld;
+	u8 wnm_disassoc_addr[ETH_ALEN];
+	u16 wnm_disassoc_timer;
 	u8 wnm_bss_termination_duration[12];
 	struct neighbor_report *wnm_neighbor_report_elements;
 	struct os_reltime wnm_cand_valid_until;
@@ -1579,6 +1591,7 @@ struct wpa_supplicant {
 	bool wps_scan_done; /* Set upon receiving scan results event */
 	bool supp_pbc_active; /* Set for interface when PBC is triggered */
 	bool wps_overlap;
+	bool scan_in_progress_6ghz; /* Set upon a 6 GHz scan being triggered */
 
 #ifdef CONFIG_PASN
 	struct pasn_data pasn;
@@ -1595,6 +1608,10 @@ struct wpa_supplicant {
 
 	struct wpa_signal_info last_signal_info;
 
+#ifdef CONFIG_IEEE80211AH
+	u8 s1g_rrm_op_class;
+#endif /* CONFIG_IEEE80211AH */
+
 	struct wpa_ssid *ml_connect_probe_ssid;
 	struct wpa_bss *ml_connect_probe_bss;
 
@@ -1609,6 +1626,12 @@ struct wpa_supplicant {
 	struct wpa_radio_work *nan_usd_listen_work;
 	struct wpa_radio_work *nan_usd_tx_work;
 #endif /* CONFIG_NAN_USD */
+
+	bool ssid_verified;
+	bool bigtk_set;
+	u64 first_beacon_tsf;
+	unsigned int beacons_checked;
+	unsigned int next_beacon_check;
 };
 
 
@@ -1720,6 +1743,7 @@ void wpas_connection_failed(struct wpa_supplicant *wpa_s, const u8 *bssid,
 void fils_connection_failure(struct wpa_supplicant *wpa_s);
 void fils_pmksa_cache_flush(struct wpa_supplicant *wpa_s);
 int wpas_driver_bss_selection(struct wpa_supplicant *wpa_s);
+bool wpas_rsn_overriding(struct wpa_supplicant *wpa_s);
 int wpas_is_p2p_prioritized(struct wpa_supplicant *wpa_s);
 void wpas_auth_failed(struct wpa_supplicant *wpa_s, const char *reason,
 		      const u8 *bssid);
@@ -1806,6 +1830,11 @@ enum chan_allowed {
 
 enum chan_allowed verify_channel(struct hostapd_hw_modes *mode, u8 op_class,
 				 u8 channel, u8 bw);
+#ifdef CONFIG_IEEE80211AH
+size_t wpas_supp_s1g_op_class_ie(struct wpa_supplicant *wpa_s,
+				struct wpa_ssid *ssid,
+				struct wpa_bss *bss, u8 *pos, size_t len);
+#endif
 size_t wpas_supp_op_class_ie(struct wpa_supplicant *wpa_s,
 			     struct wpa_ssid *ssid,
 			     struct wpa_bss *bss, u8 *pos, size_t len);
@@ -1835,6 +1864,14 @@ int wpa_supplicant_ctrl_iface_ctrl_rsp_handle(struct wpa_supplicant *wpa_s,
 void ibss_mesh_setup_freq(struct wpa_supplicant *wpa_s,
 			  const struct wpa_ssid *ssid,
 			  struct hostapd_freq_params *freq);
+
+#ifdef CONFIG_IEEE80211AH
+/* Set frequency parameters for IBSS / MESH */
+void morse_ibss_mesh_setup_freq(struct wpa_supplicant *wpa_s,
+				struct wpa_ssid *ssid,
+				struct hostapd_freq_params *freq,
+				struct hostapd_config *conf);
+#endif
 
 /* events.c */
 void wpa_supplicant_mark_disassoc(struct wpa_supplicant *wpa_s);
@@ -1890,9 +1927,13 @@ static inline int wpas_mode_to_ieee80211_mode(enum wpas_mode mode)
 
 int wpas_network_disabled(struct wpa_supplicant *wpa_s, struct wpa_ssid *ssid);
 int wpas_get_ssid_pmf(struct wpa_supplicant *wpa_s, struct wpa_ssid *ssid);
+#ifdef CONFIG_IEEE80211AH
+int wpas_get_ssid_cac(struct wpa_supplicant *wpa_s, struct wpa_ssid *ssid);
+#endif
 int pmf_in_use(struct wpa_supplicant *wpa_s, const u8 *addr);
 void wpa_s_setup_sae_pt(struct wpa_config *conf, struct wpa_ssid *ssid,
 			bool force);
+void wpa_s_clear_sae_rejected(struct wpa_supplicant *wpa_s);
 
 bool wpas_is_sae_avoided(struct wpa_supplicant *wpa_s,
 			struct wpa_ssid *ssid,
@@ -2003,5 +2044,11 @@ bool wpas_is_6ghz_supported(struct wpa_supplicant *wpa_s, bool only_enabled);
 
 bool wpa_is_non_eht_scs_traffic_desc_supported(struct wpa_bss *bss);
 bool wpas_ap_link_address(struct wpa_supplicant *wpa_s, const u8 *addr);
+bool wpas_ap_supports_rsn_overriding(struct wpa_supplicant *wpa_s,
+				     struct wpa_bss *bss);
+bool wpas_ap_supports_rsn_overriding_2(struct wpa_supplicant *wpa_s,
+				       struct wpa_bss *bss);
+int wpas_get_owe_trans_network(const u8 *owe_ie, const u8 **bssid,
+			       const u8 **ssid, size_t *ssid_len);
 
 #endif /* WPA_SUPPLICANT_I_H */

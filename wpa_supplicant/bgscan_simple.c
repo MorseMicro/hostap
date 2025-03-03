@@ -41,6 +41,7 @@ static void bgscan_simple_timeout(void *eloop_ctx, void *timeout_ctx);
 static bool bgscan_simple_btm_query(struct wpa_supplicant *wpa_s,
 				    struct bgscan_simple_data *data)
 {
+#ifndef CONFIG_NO_BSS_TRANS_MGMT
 	unsigned int mod;
 
 	if (!data->use_btm_query || wpa_s->conf->disable_btm ||
@@ -71,6 +72,10 @@ static bool bgscan_simple_btm_query(struct wpa_supplicant *wpa_s,
 	eloop_register_timeout(data->scan_interval, 0,
 			       bgscan_simple_timeout, data, NULL);
 	return true;
+
+#else /* CONFIG_NO_BSS_TRANS_MGMT */
+	return false;
+#endif
 }
 
 
@@ -88,6 +93,10 @@ static void bgscan_simple_timeout(void *eloop_ctx, void *timeout_ctx)
 	params.ssids[0].ssid = data->ssid->ssid;
 	params.ssids[0].ssid_len = data->ssid->ssid_len;
 	params.freqs = data->ssid->scan_freq;
+
+	/* Add OWE transition mode SSID of the current network */
+	wpa_add_owe_scan_ssid(wpa_s, &params, data->ssid,
+			      wpa_s->max_scan_ssids - params.num_ssids);
 
 	/*
 	 * A more advanced bgscan module would learn about most like channels

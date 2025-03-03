@@ -1,6 +1,7 @@
 /*
  * hostapd / main()
  * Copyright (c) 2002-2022, Jouni Malinen <j@w1.fi>
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -191,7 +192,6 @@ static int hostapd_driver_init(struct hostapd_iface *iface)
 			os_memcpy(hapd->own_addr, b, ETH_ALEN);
 		}
 
-		hostapd_mld_add_link(hapd);
 		wpa_printf(MSG_DEBUG,
 			   "Setup of non first link (%d) BSS of MLD %s",
 			   hapd->mld_link_id, hapd->conf->iface);
@@ -278,7 +278,6 @@ static int hostapd_driver_init(struct hostapd_iface *iface)
 		else
 			os_memcpy(hapd->own_addr, b, ETH_ALEN);
 
-		hostapd_mld_add_link(hapd);
 		wpa_printf(MSG_DEBUG, "Setup of first link (%d) BSS of MLD %s",
 			   hapd->mld_link_id, hapd->conf->iface);
 	}
@@ -338,8 +337,14 @@ setup_mld:
 			   hapd->mld_link_id, MAC2STR(hapd->mld->mld_addr),
 			   MAC2STR(hapd->own_addr));
 
-		hostapd_drv_link_add(hapd, hapd->mld_link_id,
-				     hapd->own_addr);
+		if (hostapd_drv_link_add(hapd, hapd->mld_link_id,
+					 hapd->own_addr)) {
+			wpa_printf(MSG_ERROR,
+				   "MLD: Failed to add link %d in MLD %s",
+				   hapd->mld_link_id, hapd->conf->iface);
+			return -1;
+		}
+		hostapd_mld_add_link(hapd);
 	}
 #endif /* CONFIG_IEEE80211BE */
 
@@ -405,7 +410,7 @@ static void handle_term(int sig, void *signal_ctx)
 
 static int handle_reload_iface(struct hostapd_iface *iface, void *ctx)
 {
-	if (hostapd_reload_config(iface) < 0) {
+	if (hostapd_reload_config(iface, 0) < 0) {
 		wpa_printf(MSG_WARNING, "Failed to read new configuration "
 			   "file - continuing with old.");
 	}
@@ -461,7 +466,11 @@ static int hostapd_global_init(struct hapd_interfaces *interfaces,
 	eloop_register_signal_terminate(handle_term, interfaces);
 
 #ifndef CONFIG_NATIVE_WINDOWS
+#ifdef CONFIG_IEEE80211AH
+	openlog("hostapd_s1g", 0, LOG_DAEMON);
+#else
 	openlog("hostapd", 0, LOG_DAEMON);
+#endif /* CONFIG_IEEE80211AH */
 #endif /* CONFIG_NATIVE_WINDOWS */
 
 	for (i = 0; wpa_drivers[i]; i++)
@@ -555,7 +564,7 @@ static void show_version(void)
 		"hostapd v%s\n"
 		"User space daemon for IEEE 802.11 AP management,\n"
 		"IEEE 802.1X/WPA/WPA2/EAP/RADIUS Authenticator\n"
-		"Copyright (c) 2002-2022, Jouni Malinen <j@w1.fi> "
+		"Copyright (c) 2002-2024, Jouni Malinen <j@w1.fi> "
 		"and contributors\n",
 		VERSION_STR);
 }

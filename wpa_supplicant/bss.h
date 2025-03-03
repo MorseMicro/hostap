@@ -1,6 +1,7 @@
 /*
  * BSS table
  * Copyright (c) 2009-2019, Jouni Malinen <j@w1.fi>
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -120,6 +121,12 @@ struct wpa_bss {
 	int snr;
 	/** ANQP data */
 	struct wpa_bss_anqp *anqp;
+#ifdef CONFIG_IEEE80211AH
+	/** Centralized Authentication Control (CAC) threshold */
+	u16 cac_threshold;
+	/** Centralized Authentication Control (CAC) random value */
+	u16 cac_random;
+#endif
 	/** Length of the following IE field in octets (from Probe Response) */
 	size_t ie_len;
 	/** Length of the following Beacon IE field in octets */
@@ -165,6 +172,9 @@ void wpa_bss_flush(struct wpa_supplicant *wpa_s);
 void wpa_bss_flush_by_age(struct wpa_supplicant *wpa_s, int age);
 struct wpa_bss * wpa_bss_get(struct wpa_supplicant *wpa_s, const u8 *bssid,
 			     const u8 *ssid, size_t ssid_len);
+struct wpa_bss * wpa_bss_get_connection(struct wpa_supplicant *wpa_s,
+					const u8 *bssid,
+					const u8 *ssid, size_t ssid_len);
 struct wpa_bss * wpa_bss_get_bssid(struct wpa_supplicant *wpa_s,
 				   const u8 *bssid);
 struct wpa_bss * wpa_bss_get_bssid_latest(struct wpa_supplicant *wpa_s,
@@ -175,6 +185,7 @@ struct wpa_bss * wpa_bss_get_id(struct wpa_supplicant *wpa_s, unsigned int id);
 struct wpa_bss * wpa_bss_get_id_range(struct wpa_supplicant *wpa_s,
 				      unsigned int idf, unsigned int idl);
 const u8 * wpa_bss_get_ie(const struct wpa_bss *bss, u8 ie);
+const u8 * wpa_bss_get_ie_beacon(const struct wpa_bss *bss, u8 ie);
 const u8 * wpa_bss_get_ie_ext(const struct wpa_bss *bss, u8 ext);
 const u8 * wpa_bss_get_vendor_ie(const struct wpa_bss *bss, u32 vendor_type);
 const u8 * wpa_bss_get_vendor_ie_beacon(const struct wpa_bss *bss,
@@ -189,6 +200,9 @@ struct wpa_bss_anqp * wpa_bss_anqp_alloc(void);
 int wpa_bss_anqp_unshare_alloc(struct wpa_bss *bss);
 const u8 * wpa_bss_get_fils_cache_id(const struct wpa_bss *bss);
 int wpa_bss_ext_capab(const struct wpa_bss *bss, unsigned int capab);
+#ifdef CONFIG_IEEE80211AH
+void wpa_bss_cac_set_random_value(struct wpa_bss *bss);
+#endif
 
 static inline int bss_is_dmg(const struct wpa_bss *bss)
 {
@@ -224,5 +238,12 @@ int wpa_bss_parse_basic_ml_element(struct wpa_supplicant *wpa_s,
 				   u8 *ap_mld_id);
 u16 wpa_bss_parse_reconf_ml_element(struct wpa_supplicant *wpa_s,
 				    struct wpa_bss *bss);
+
+const u8 * wpa_bss_get_rsne(struct wpa_supplicant *wpa_s,
+			    const struct wpa_bss *bss, struct wpa_ssid *ssid,
+			    bool mlo);
+const u8 * wpa_bss_get_rsnxe(struct wpa_supplicant *wpa_s,
+			     const struct wpa_bss *bss, struct wpa_ssid *ssid,
+			     bool mlo);
 
 #endif /* BSS_H */

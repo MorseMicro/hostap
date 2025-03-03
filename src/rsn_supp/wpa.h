@@ -1,6 +1,7 @@
 /*
  * wpa_supplicant - WPA definitions
  * Copyright (c) 2003-2015, Jouni Malinen <j@w1.fi>
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -104,6 +105,7 @@ struct wpa_sm_ctx {
 #endif /* CONFIG_PASN */
 	void (*notify_pmksa_cache_entry)(void *ctx,
 					 struct rsn_pmksa_cache_entry *entry);
+	void (*ssid_verified)(void *ctx);
 };
 
 
@@ -135,6 +137,16 @@ enum wpa_sm_conf_params {
 	WPA_PARAM_ENCRYPT_EAPOL_M2,
 	WPA_PARAM_ENCRYPT_EAPOL_M4,
 	WPA_PARAM_FT_PREPEND_PMKID,
+	WPA_PARAM_SSID_PROTECTION,
+	WPA_PARAM_RSN_OVERRIDE,
+	WPA_PARAM_RSN_OVERRIDE_SUPPORT,
+};
+
+enum wpa_rsn_override {
+	RSN_OVERRIDE_NOT_USED,
+	RSN_OVERRIDE_RSNE,
+	RSN_OVERRIDE_RSNE_OVERRIDE,
+	RSN_OVERRIDE_RSNE_OVERRIDE_2,
 };
 
 struct rsn_supp_config {
@@ -158,8 +170,9 @@ struct rsn_supp_config {
 struct wpa_sm_link {
 	u8 addr[ETH_ALEN];
 	u8 bssid[ETH_ALEN];
-	u8 *ap_rsne, *ap_rsnxe;
-	size_t ap_rsne_len, ap_rsnxe_len;
+	u8 *ap_rsne, *ap_rsnxe, *ap_rsnoe, *ap_rsno2e, *ap_rsnxoe;
+	size_t ap_rsne_len, ap_rsnxe_len, ap_rsnoe_len, ap_rsno2e_len,
+		ap_rsnxoe_len;;
 	struct wpa_gtk gtk;
 	struct wpa_gtk gtk_wnm_sleep;
 	struct wpa_igtk igtk;
@@ -188,10 +201,12 @@ void wpa_sm_set_pmk_from_pmksa(struct wpa_sm *sm);
 void wpa_sm_set_fast_reauth(struct wpa_sm *sm, int fast_reauth);
 void wpa_sm_set_scard_ctx(struct wpa_sm *sm, void *scard_ctx);
 void wpa_sm_set_config(struct wpa_sm *sm, struct rsn_supp_config *config);
+void wpa_sm_set_ssid(struct wpa_sm *sm, const u8 *ssid, size_t ssid_len);
 void wpa_sm_set_own_addr(struct wpa_sm *sm, const u8 *addr);
 void wpa_sm_set_ifname(struct wpa_sm *sm, const char *ifname,
 		       const char *bridge_ifname);
 void wpa_sm_set_eapol(struct wpa_sm *sm, struct eapol_sm *eapol);
+int wpa_sm_set_assoc_aid(struct wpa_sm *sm, u16 aid);
 int wpa_sm_set_assoc_wpa_ie(struct wpa_sm *sm, const u8 *ie, size_t len);
 int wpa_sm_set_assoc_wpa_ie_default(struct wpa_sm *sm, u8 *wpa_ie,
 				    size_t *wpa_ie_len);
@@ -201,6 +216,9 @@ int wpa_sm_set_assoc_rsnxe(struct wpa_sm *sm, const u8 *ie, size_t len);
 int wpa_sm_set_ap_wpa_ie(struct wpa_sm *sm, const u8 *ie, size_t len);
 int wpa_sm_set_ap_rsn_ie(struct wpa_sm *sm, const u8 *ie, size_t len);
 int wpa_sm_set_ap_rsnxe(struct wpa_sm *sm, const u8 *ie, size_t len);
+int wpa_sm_set_ap_rsne_override(struct wpa_sm *sm, const u8 *ie, size_t len);
+int wpa_sm_set_ap_rsne_override_2(struct wpa_sm *sm, const u8 *ie, size_t len);
+int wpa_sm_set_ap_rsnxe_override(struct wpa_sm *sm, const u8 *ie, size_t len);
 int wpa_sm_get_mib(struct wpa_sm *sm, char *buf, size_t buflen);
 
 int wpa_sm_set_param(struct wpa_sm *sm, enum wpa_sm_conf_params param,
@@ -341,6 +359,24 @@ static inline int wpa_sm_set_ap_rsn_ie(struct wpa_sm *sm, const u8 *ie,
 
 static inline int wpa_sm_set_ap_rsnxe(struct wpa_sm *sm, const u8 *ie,
 				      size_t len)
+{
+	return -1;
+}
+
+static inline int wpa_sm_set_ap_rsne_override(struct wpa_sm *sm, const u8 *ie,
+					      size_t len)
+{
+	return -1;
+}
+
+static inline int wpa_sm_set_ap_rsne_override_2(struct wpa_sm *sm, const u8 *ie,
+						size_t len)
+{
+	return -1;
+}
+
+static inline int wpa_sm_set_ap_rsnxe_override(struct wpa_sm *sm, const u8 *ie,
+					       size_t len)
 {
 	return -1;
 }

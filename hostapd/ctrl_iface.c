@@ -1,6 +1,7 @@
 /*
  * hostapd / UNIX domain socket -based control interface
  * Copyright (c) 2004-2018, Jouni Malinen <j@w1.fi>
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -70,6 +71,8 @@
 #include "fst/fst_ctrl_iface.h"
 #include "config_file.h"
 #include "ctrl_iface.h"
+#include "config_file.h"
+#include "utils/morse.h"
 
 
 #define HOSTAPD_CLI_DUP_VALUE_MAX_LEN 256
@@ -85,6 +88,7 @@ static void hostapd_ctrl_iface_send(struct hostapd_data *hapd, int level,
 				    enum wpa_msg_type type,
 				    const char *buf, size_t len);
 
+static char *reload_opts = NULL;
 
 static int hostapd_ctrl_iface_attach(struct hostapd_data *hapd,
 				     struct sockaddr_storage *from,
@@ -136,6 +140,61 @@ static int hostapd_ctrl_iface_new_sta(struct hostapd_data *hapd,
 	return 0;
 }
 
+static char *get_option(char *opt, char *str)
+{
+	int len = strlen(str);
+
+	if (!strncmp(opt, str, len))
+		return opt + len;
+	else
+		return NULL;
+}
+
+static struct hostapd_config *hostapd_ctrl_iface_config_read(const char *fname)
+{
+	struct hostapd_config *conf;
+	char *opt, *val;
+
+	conf = hostapd_config_read(fname);
+	if (!conf)
+		return NULL;
+
+	for (opt = strtok(reload_opts, " ");
+	     opt;
+		 opt = strtok(NULL, " ")) {
+
+		if ((val = get_option(opt, "channel=")))
+			conf->channel = atoi(val);
+		else if ((val = get_option(opt, "ht_capab=")))
+			conf->ht_capab = atoi(val);
+		else if ((val = get_option(opt, "ht_capab_mask=")))
+			conf->ht_capab &= atoi(val);
+		else if ((val = get_option(opt, "sec_chan=")))
+			conf->secondary_channel = atoi(val);
+		else if ((val = get_option(opt, "hw_mode=")))
+			conf->hw_mode = atoi(val);
+		else if ((val = get_option(opt, "ieee80211n=")))
+			conf->ieee80211n = atoi(val);
+		else
+			break;
+	}
+
+	return conf;
+}
+
+static void hostapd_ctrl_iface_update(struct hostapd_data *hapd, char *txt)
+{
+	struct hostapd_config * (*config_read_cb)(const char *config_fname);
+	struct hostapd_iface *iface = hapd->iface;
+
+	config_read_cb = iface->interfaces->config_read_cb;
+	iface->interfaces->config_read_cb = hostapd_ctrl_iface_config_read;
+	reload_opts = txt;
+
+	hostapd_reload_config(iface, 0);
+
+	iface->interfaces->config_read_cb = config_read_cb;
+}
 
 #ifdef NEED_AP_MLME
 static int hostapd_ctrl_iface_sa_query(struct hostapd_data *hapd,
@@ -2454,6 +2513,31 @@ static int hostapd_ctrl_register_frame(struct hostapd_data *hapd,
 
 
 #ifdef NEED_AP_MLME
+
+static bool
+hostapd_ctrl_is_freq_in_cmode(struct hostapd_hw_modes *mode,
+			      struct hostapd_multi_hw_info *current_hw_info,
+			      int freq)
+{
+	struct hostapd_channel_data *chan;
+	int i;
+
+	for (i = 0; i < mode->num_channels; i++) {
+		chan = &mode->channels[i];
+
+		if (chan->flag & HOSTAPD_CHAN_DISABLED)
+			continue;
+
+		if (!chan_in_current_hw_info(current_hw_info, chan))
+			continue;
+
+		if (chan->freq == freq)
+			return true;
+	}
+	return false;
+}
+
+
 static int hostapd_ctrl_check_freq_params(struct hostapd_freq_params *params,
 					  u16 punct_bitmap)
 {
@@ -2476,6 +2560,21 @@ static int hostapd_ctrl_check_freq_params(struct hostapd_freq_params *params,
 			if (bw < 0 || bw > (int) ARRAY_SIZE(bw_idx) ||
 			    bw_idx[bw] != params->bandwidth)
 				return -1;
+		}
+	} else { /* Non-6 GHz channel */
+		/* An EHT STA is also an HE STA as defined in
+		 * IEEE P802.11be/D5.0, 4.3.16a. */
+		if (params->he_enabled || params->eht_enabled) {
+			params->he_enabled = 1;
+			/* An HE STA is also a VHT STA if operating in the 5 GHz
+			 * band and an HE STA is also an HT STA in the 2.4 GHz
+			 * band as defined in IEEE Std 802.11ax-2021, 4.3.15a.
+			 * A VHT STA is an HT STA as defined in IEEE
+			 * Std 802.11, 4.3.15. */
+			if (IS_5GHZ(params->freq))
+				params->vht_enabled = 1;
+
+			params->ht_enabled = 1;
 		}
 	}
 
@@ -2640,6 +2739,7 @@ static int hostapd_ctrl_iface_chan_switch(struct hostapd_iface *iface,
 	unsigned int i;
 	int bandwidth;
 	u8 chan;
+	u8 is_s1g_freq = 0;
 	unsigned int num_err = 0;
 	int err = 0;
 
@@ -2652,6 +2752,36 @@ static int hostapd_ctrl_iface_chan_switch(struct hostapd_iface *iface,
 	if (iface->num_bss && iface->bss[0]->conf->mld_ap)
 		settings.link_id = iface->bss[0]->mld_link_id;
 #endif /* CONFIG_IEEE80211BE */
+
+	/* Check if input frequency is s1g_frequency.
+	 * This check is necessary for interoperability with
+	 * ht frequencies as input. If the input is S1G frequency
+	 * then we do S1G to ht frequency conversions later
+	 */
+	if (settings.freq_params.center_freq1 >  MIN_S1G_FREQ_KHZ &&
+		settings.freq_params.center_freq1 < MAX_S1G_FREQ_KHZ &&
+		settings.freq_params.freq >  MIN_S1G_FREQ_KHZ &&
+		settings.freq_params.freq < MAX_S1G_FREQ_KHZ)
+	{
+		is_s1g_freq = 1;
+	}
+#ifdef CONFIG_IEEE80211AH
+	if (is_s1g_freq)
+	{
+		ret = morse_s1g_validate_csa_params(iface, &settings);
+		if (ret)
+			return ret;
+	}
+#endif /* CONFIG_IEEE80211AH */
+
+	if (iface->num_hw_features > 1 &&
+	    !hostapd_ctrl_is_freq_in_cmode(iface->current_mode,
+					   iface->current_hw_info,
+					   settings.freq_params.freq)) {
+		wpa_printf(MSG_INFO,
+			   "chanswitch: Invalid frequency settings provided for multi band phy");
+		return -1;
+	}
 
 	ret = hostapd_ctrl_check_freq_params(&settings.freq_params,
 					     settings.punct_bitmap);
@@ -2720,11 +2850,35 @@ static int hostapd_ctrl_iface_chan_switch(struct hostapd_iface *iface,
 		return 0;
 	}
 
+	if (iface->cac_started) {
+		wpa_printf(MSG_DEBUG,
+			   "CAC is in progress - switching channel without CSA");
+		return hostapd_force_channel_switch(iface, settings);
+	}
+
 	for (i = 0; i < iface->num_bss; i++) {
 
 		/* Save CHAN_SWITCH VHT, HE, and EHT config */
 		hostapd_chan_switch_config(iface->bss[i],
 					   &settings.freq_params);
+
+#ifdef CONFIG_IEEE80211AH
+		/* Enable VHT caps based on the new channel width and S1G config */
+		if (settings.freq_params.bandwidth > 80) {
+			iface->conf->vht_capab |= VHT_CAP_SUPP_CHAN_WIDTH_160MHZ;
+			if (iface->conf->s1g_capab & S1G_CAP0_SGI_8MHZ)
+				iface->conf->vht_capab |= VHT_CAP_SHORT_GI_160;
+		}
+		if (is_s1g_freq)
+			morse_set_ecsa_params(iface->conf->bss[i]->iface,
+					settings.s1g_freq_params.s1g_global_op_class,
+					settings.s1g_freq_params.s1g_prim_bw,
+					settings.s1g_freq_params.s1g_oper_bw,
+					settings.s1g_freq_params.s1g_oper_freq,
+					settings.s1g_freq_params.s1g_prim_channel_index_1MHz,
+					settings.s1g_freq_params.s1g_prim_ch_global_op_class,
+					iface->conf->s1g_capab);
+#endif /* CONFIG_IEEE80211AH */
 
 		err = hostapd_switch_channel(iface->bss[i], &settings);
 		if (err) {
@@ -2738,6 +2892,99 @@ static int hostapd_ctrl_iface_chan_switch(struct hostapd_iface *iface,
 	return -1;
 #endif /* NEED_AP_MLME */
 }
+
+
+#ifdef CONFIG_IEEE80211AX
+static int hostapd_ctrl_iface_color_change(struct hostapd_iface *iface,
+					   const char *pos)
+{
+#ifdef NEED_AP_MLME
+	struct cca_settings settings;
+	struct hostapd_data *hapd = iface->bss[0];
+	int ret, color;
+	unsigned int i;
+	char *end;
+
+	os_memset(&settings, 0, sizeof(settings));
+
+	color = strtol(pos, &end, 10);
+	if (pos == end || color < 0 || color > 63) {
+		wpa_printf(MSG_ERROR, "color_change: Invalid color provided");
+		return -1;
+	}
+
+	/* Color value is expected to be [1-63]. If 0 comes, assumption is this
+	 * is to disable the color. In this case no need to do CCA, just
+	 * changing Beacon frames is sufficient. */
+	if (color == 0) {
+		if (iface->conf->he_op.he_bss_color_disabled) {
+			wpa_printf(MSG_ERROR,
+				   "color_change: Color is already disabled");
+			return -1;
+		}
+
+		iface->conf->he_op.he_bss_color_disabled = 1;
+
+		for (i = 0; i < iface->num_bss; i++)
+			ieee802_11_set_beacon(iface->bss[i]);
+
+		return 0;
+	}
+
+	if (color == iface->conf->he_op.he_bss_color) {
+		if (!iface->conf->he_op.he_bss_color_disabled) {
+			wpa_printf(MSG_ERROR,
+				   "color_change: Provided color is already set");
+			return -1;
+		}
+
+		iface->conf->he_op.he_bss_color_disabled = 0;
+
+		for (i = 0; i < iface->num_bss; i++)
+			ieee802_11_set_beacon(iface->bss[i]);
+
+		return 0;
+	}
+
+	if (hapd->cca_in_progress) {
+		wpa_printf(MSG_ERROR,
+			   "color_change: CCA is already in progress");
+		return -1;
+	}
+
+	iface->conf->he_op.he_bss_color_disabled = 0;
+
+	for (i = 0; i < iface->num_bss; i++) {
+		struct hostapd_data *bss = iface->bss[i];
+
+		hostapd_cleanup_cca_params(bss);
+
+		bss->cca_color = color;
+		bss->cca_count = 10;
+
+		if (hostapd_fill_cca_settings(bss, &settings)) {
+			wpa_printf(MSG_DEBUG,
+				   "color_change: Filling CCA settings failed for color: %d\n",
+				   color);
+			hostapd_cleanup_cca_params(bss);
+			continue;
+		}
+
+		wpa_printf(MSG_DEBUG, "Setting user selected color: %d", color);
+		ret = hostapd_drv_switch_color(bss, &settings);
+		if (ret)
+			hostapd_cleanup_cca_params(bss);
+
+		free_beacon_data(&settings.beacon_cca);
+		free_beacon_data(&settings.beacon_after);
+	}
+
+	return 0;
+#else /* NEED_AP_MLME */
+	return -1;
+#endif /* NEED_AP_MLME */
+}
+#endif /* CONFIG_IEEE80211AX */
 
 
 static u8 hostapd_maxnss(struct hostapd_data *hapd, struct sta_info *sta)
@@ -4073,7 +4320,7 @@ static int hostapd_ctrl_iface_receive_process(struct hostapd_data *hapd,
 		if (hostapd_ctrl_iface_reload_bss(hapd))
 			reply_len = -1;
 	} else if (os_strcmp(buf, "RELOAD_CONFIG") == 0) {
-		if (hostapd_reload_config(hapd->iface))
+		if (hostapd_reload_config(hapd->iface, 1))
 			reply_len = -1;
 	} else if (os_strcmp(buf, "RELOAD") == 0) {
 		if (hostapd_ctrl_iface_reload(hapd->iface))
@@ -4154,12 +4401,19 @@ static int hostapd_ctrl_iface_receive_process(struct hostapd_data *hapd,
 	} else if (os_strncmp(buf, "CHAN_SWITCH ", 12) == 0) {
 		if (hostapd_ctrl_iface_chan_switch(hapd->iface, buf + 12))
 			reply_len = -1;
+#ifdef CONFIG_IEEE80211AX
+	} else if (os_strncmp(buf, "COLOR_CHANGE ", 13) == 0) {
+		if (hostapd_ctrl_iface_color_change(hapd->iface, buf + 13))
+			reply_len = -1;
+#endif /* CONFIG_IEEE80211AX */
 	} else if (os_strncmp(buf, "NOTIFY_CW_CHANGE ", 17) == 0) {
 		if (hostapd_ctrl_iface_notify_cw_change(hapd, buf + 17))
 			reply_len = -1;
 	} else if (os_strncmp(buf, "VENDOR ", 7) == 0) {
 		reply_len = hostapd_ctrl_iface_vendor(hapd, buf + 7, reply,
 						      reply_size);
+	} else if (os_strncmp(buf, "UPDATE ", 7) == 0) {
+		hostapd_ctrl_iface_update(hapd, buf + 7);
 	} else if (os_strcmp(buf, "ERP_FLUSH") == 0) {
 		ieee802_1x_erp_flush(hapd);
 #ifdef RADIUS_SERVER

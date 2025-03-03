@@ -1,6 +1,7 @@
 /*
  * hostapd / Initialization and configuration
  * Copyright (c) 2002-2021, Jouni Malinen <j@w1.fi>
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -57,6 +58,8 @@
 #include "airtime_policy.h"
 #include "wpa_auth_kay.h"
 #include "hw_features.h"
+
+#include "utils/morse.h"
 
 
 static int hostapd_flush_old_stations(struct hostapd_data *hapd, u16 reason);
@@ -235,6 +238,10 @@ static int hostapd_iface_conf_changed(struct hostapd_config *newconf,
 {
 	size_t i;
 
+	if (newconf->config_id != oldconf->config_id)
+		if (strcmp(newconf->config_id, oldconf->config_id))
+			return 1;
+
 	if (newconf->num_bss != oldconf->num_bss)
 		return 1;
 
@@ -248,7 +255,7 @@ static int hostapd_iface_conf_changed(struct hostapd_config *newconf,
 }
 
 
-int hostapd_reload_config(struct hostapd_iface *iface)
+int hostapd_reload_config(struct hostapd_iface *iface, int reconf)
 {
 	struct hapd_interfaces *interfaces = iface->interfaces;
 	struct hostapd_data *hapd = iface->bss[0];
@@ -274,6 +281,9 @@ int hostapd_reload_config(struct hostapd_iface *iface)
 	if (hostapd_iface_conf_changed(newconf, oldconf)) {
 		char *fname;
 		int res;
+
+		if (reconf)
+			return -1;
 
 		hostapd_clear_old(iface);
 
@@ -301,15 +311,42 @@ int hostapd_reload_config(struct hostapd_iface *iface)
 			wpa_printf(MSG_ERROR,
 				   "Failed to enable interface on config reload");
 		return res;
+	} else {
+		for (j = 0; j < iface->num_bss; j++) {
+			hapd = iface->bss[j];
+			if (!hapd->config_id || strcmp(hapd->config_id, newconf->bss[j]->config_id)) {
+				hostapd_flush_old_stations(iface->bss[j],
+							   WLAN_REASON_PREV_AUTH_NOT_VALID);
+#ifdef CONFIG_WEP
+				hostapd_broadcast_wep_clear(iface->bss[j]);
+#endif
+
+#ifndef CONFIG_NO_RADIUS
+				/* TODO: update dynamic data based on changed configuration
+				 * items (e.g., open/close sockets, etc.) */
+				radius_client_flush(iface->bss[j]->radius, 0);
+#endif /* CONFIG_NO_RADIUS */
+				wpa_printf(MSG_INFO, "bss %zu changed", j);
+			}
+		}
 	}
 	iface->conf = newconf;
 
 	for (j = 0; j < iface->num_bss; j++) {
 		hapd = iface->bss[j];
+
+		if (hapd->config_id) {
+			os_free(hapd->config_id);
+			hapd->config_id = NULL;
+		}
+		if (newconf->bss[j]->config_id)
+			hapd->config_id = strdup(newconf->bss[j]->config_id);
+
 		if (!hapd->conf->config_id || !newconf->bss[j]->config_id ||
 		    os_strcmp(hapd->conf->config_id,
 			      newconf->bss[j]->config_id) != 0)
 			hostapd_clear_old_bss(hapd);
+
 		hapd->iconf = newconf;
 		hapd->iconf->channel = oldconf->channel;
 		hapd->iconf->acs = oldconf->acs;
@@ -400,8 +437,6 @@ static int hostapd_broadcast_wep_set(struct hostapd_data *hapd)
 #ifdef CONFIG_IEEE80211BE
 #ifdef CONFIG_TESTING_OPTIONS
 
-#define TU_TO_USEC(_val) ((_val) * 1024)
-
 static void hostapd_link_remove_timeout_handler(void *eloop_data,
 						void *user_ctx)
 {
@@ -440,6 +475,8 @@ int hostapd_link_remove(struct hostapd_data *hapd, u32 count)
 
 	hapd->eht_mld_link_removal_count = count;
 	hapd->eht_mld_bss_param_change++;
+	if (hapd->eht_mld_bss_param_change == 255)
+		hapd->eht_mld_bss_param_change = 0;
 
 	eloop_register_timeout(0, TU_TO_USEC(hapd->iconf->beacon_int),
 			       hostapd_link_remove_timeout_handler,
@@ -620,9 +657,19 @@ void hostapd_free_hapd_data(struct hostapd_data *hapd)
 static void hostapd_bss_link_deinit(struct hostapd_data *hapd)
 {
 #ifdef CONFIG_IEEE80211BE
+	int i;
+
 	if (!hapd->conf || !hapd->conf->mld_ap)
 		return;
 
+	/* Free per STA profiles */
+	for (i = 0; i < MAX_NUM_MLD_LINKS; i++) {
+		os_free(hapd->partner_links[i].resp_sta_profile);
+		os_memset(&hapd->partner_links[i], 0,
+			  sizeof(hapd->partner_links[i]));
+	}
+
+	/* Put all freeing logic above this */
 	if (!hapd->mld->num_links)
 		return;
 
@@ -702,6 +749,9 @@ void hostapd_cleanup_iface_partial(struct hostapd_iface *iface)
 	ap_list_deinit(iface);
 	sta_track_deinit(iface);
 	airtime_policy_update_deinit(iface);
+	hostapd_free_multi_hw_info(iface->multi_hw_info);
+	iface->multi_hw_info = NULL;
+	iface->current_hw_info = NULL;
 }
 
 
@@ -1307,6 +1357,59 @@ static int hostapd_start_beacon(struct hostapd_data *hapd,
 }
 
 
+#ifndef CONFIG_NO_RADIUS
+static int hostapd_bss_radius_init(struct hostapd_data *hapd)
+{
+	struct hostapd_bss_config *conf;
+
+	if (!hapd)
+		return -1;
+
+	conf = hapd->conf;
+
+	if (hapd->radius) {
+		wpa_printf(MSG_DEBUG,
+			   "Skipping RADIUS client init (already done)");
+		return 0;
+	}
+
+	hapd->radius = radius_client_init(hapd, conf->radius);
+	if (!hapd->radius) {
+		wpa_printf(MSG_ERROR,
+			   "RADIUS client initialization failed.");
+		return -1;
+	}
+
+	if (conf->radius_das_port) {
+		struct radius_das_conf das_conf;
+
+		os_memset(&das_conf, 0, sizeof(das_conf));
+		das_conf.port = conf->radius_das_port;
+		das_conf.shared_secret = conf->radius_das_shared_secret;
+		das_conf.shared_secret_len =
+			conf->radius_das_shared_secret_len;
+		das_conf.client_addr = &conf->radius_das_client_addr;
+		das_conf.time_window = conf->radius_das_time_window;
+		das_conf.require_event_timestamp =
+			conf->radius_das_require_event_timestamp;
+		das_conf.require_message_authenticator =
+			conf->radius_das_require_message_authenticator;
+		das_conf.ctx = hapd;
+		das_conf.disconnect = hostapd_das_disconnect;
+		das_conf.coa = hostapd_das_coa;
+		hapd->radius_das = radius_das_init(&das_conf);
+		if (!hapd->radius_das) {
+			wpa_printf(MSG_ERROR,
+				   "RADIUS DAS initialization failed.");
+			return -1;
+		}
+	}
+
+	return 0;
+}
+#endif /* CONFIG_NO_RADIUS */
+
+
 /**
  * hostapd_setup_bss - Per-BSS setup (initialization)
  * @hapd: Pointer to BSS data
@@ -1387,7 +1490,6 @@ static int hostapd_setup_bss(struct hostapd_data *hapd, int first,
 			if (h_hapd) {
 				hapd->drv_priv = h_hapd->drv_priv;
 				hapd->interface_added = h_hapd->interface_added;
-				hostapd_mld_add_link(hapd);
 				wpa_printf(MSG_DEBUG,
 					   "Setup of non first link (%d) BSS of MLD %s",
 					   hapd->mld_link_id, hapd->conf->iface);
@@ -1418,7 +1520,6 @@ static int hostapd_setup_bss(struct hostapd_data *hapd, int first,
 				   hapd->mld_link_id, hapd->conf->iface);
 			os_memcpy(hapd->mld->mld_addr, hapd->own_addr,
 				  ETH_ALEN);
-			hostapd_mld_add_link(hapd);
 		}
 #endif /* CONFIG_IEEE80211BE */
 	}
@@ -1433,14 +1534,26 @@ setup_mld:
 			   MAC2STR(hapd->own_addr));
 
 		if (hostapd_drv_link_add(hapd, hapd->mld_link_id,
-					 hapd->own_addr))
+					 hapd->own_addr)) {
+			wpa_printf(MSG_ERROR,
+				   "MLD: Failed to add link %d in MLD %s",
+				   hapd->mld_link_id, hapd->conf->iface);
 			return -1;
+		}
+		hostapd_mld_add_link(hapd);
 	}
 #endif /* CONFIG_IEEE80211BE */
 
 	if (conf->wmm_enabled < 0)
 		conf->wmm_enabled = hapd->iconf->ieee80211n |
-			hapd->iconf->ieee80211ax;
+			hapd->iconf->ieee80211ax | hapd->iconf->ieee80211ah;
+
+#ifdef CONFIG_IEEE80211AH
+	if (hapd->iconf->ieee80211ah && !conf->wmm_enabled) {
+		wpa_printf(MSG_ERROR, "%s: WMM must be enabled for IEEE80211AH", __func__);
+		return -1;
+	}
+#endif
 
 #ifdef CONFIG_IEEE80211R_AP
 	if (is_zero_ether_addr(conf->r1_key_holder))
@@ -1540,46 +1653,26 @@ setup_mld:
 #endif /* CONFIG_SQLITE */
 
 	if (hostapd_mld_is_first_bss(hapd)) {
-		hapd->radius = radius_client_init(hapd, conf->radius);
-		if (!hapd->radius) {
-			wpa_printf(MSG_ERROR,
-				   "RADIUS client initialization failed.");
+		if (hostapd_bss_radius_init(hapd))
 			return -1;
-		}
-
-		if (conf->radius_das_port) {
-			struct radius_das_conf das_conf;
-
-			os_memset(&das_conf, 0, sizeof(das_conf));
-			das_conf.port = conf->radius_das_port;
-			das_conf.shared_secret = conf->radius_das_shared_secret;
-			das_conf.shared_secret_len =
-				conf->radius_das_shared_secret_len;
-			das_conf.client_addr = &conf->radius_das_client_addr;
-			das_conf.time_window = conf->radius_das_time_window;
-			das_conf.require_event_timestamp =
-				conf->radius_das_require_event_timestamp;
-			das_conf.require_message_authenticator =
-				conf->radius_das_require_message_authenticator;
-			das_conf.ctx = hapd;
-			das_conf.disconnect = hostapd_das_disconnect;
-			das_conf.coa = hostapd_das_coa;
-			hapd->radius_das = radius_das_init(&das_conf);
-			if (!hapd->radius_das) {
-				wpa_printf(MSG_ERROR,
-					   "RADIUS DAS initialization failed.");
-				return -1;
-			}
-		}
 	} else {
 #ifdef CONFIG_IEEE80211BE
 		struct hostapd_data *f_bss;
 
-		wpa_printf(MSG_DEBUG,
-			   "MLD: Using RADIUS client of the first BSS");
 		f_bss = hostapd_mld_get_first_bss(hapd);
 		if (!f_bss)
 			return -1;
+
+		if (!f_bss->radius) {
+			wpa_printf(MSG_DEBUG,
+				   "MLD: First BSS RADIUS client does not exist. Init on its behalf");
+
+			if (hostapd_bss_radius_init(f_bss))
+				return -1;
+		}
+
+		wpa_printf(MSG_DEBUG,
+			   "MLD: Using RADIUS client of the first BSS");
 		hapd->radius = f_bss->radius;
 		hapd->radius_das = f_bss->radius_das;
 #endif /* CONFIG_IEEE80211BE */
@@ -1968,11 +2061,177 @@ void hostapd_channel_list_updated(struct hostapd_iface *iface, int initiator)
 	setup_interface2(iface);
 }
 
+void hostapd_send_raw_config(struct hostapd_bss_config *bss)
+{
+	unsigned int i;
+	int ret = 0;
+
+	/* Set RAWs based on information parsed from the config. Global disable RAW until each
+	 * priority is set so we only generate the RPS IE once.
+	 */
+	morse_raw_global_enable(bss->iface, false);
+	for (i = 0; i < ARRAY_SIZE(bss->raw); i++) {
+		struct raw_conf *raw = &bss->raw[i];
+
+		wpa_printf(MSG_INFO, "RAW Settings: %s %u %u %u %s %u %u %u %u",
+			   raw->enabled ? "enable" : "disable",
+			   raw->start_time_us,
+			   raw->duration_us,
+			   raw->slots,
+			   raw->cross_slot ? "enable" : "disable",
+			   raw->bcn_spread.max_spread,
+			   raw->bcn_spread.nominal_stas_per_bcn,
+			   raw->periodic.period,
+			   raw->periodic.start_offset);
+
+		ret = morse_raw_priority_enable(bss->iface, raw->enabled, i,
+			raw->start_time_us,
+			raw->duration_us,
+			raw->slots,
+			raw->cross_slot,
+			raw->bcn_spread.max_spread,
+			raw->bcn_spread.nominal_stas_per_bcn,
+			raw->periodic.period,
+			raw->periodic.start_offset);
+
+		if (ret)
+			wpa_printf(MSG_ERROR, "Unable to set RAW %u on interface %s",
+					i, bss->iface);
+	}
+
+	if (bss->raw_enabled) {
+		ret = morse_raw_global_enable(bss->iface, true);
+		if (ret)
+			wpa_printf(MSG_ERROR, "Unable to enable RAW on interface %s", bss->iface);
+	}
+}
 
 static int setup_interface(struct hostapd_iface *iface)
 {
 	struct hostapd_data *hapd = iface->bss[0];
 	size_t i;
+
+	const struct ah_class *prim_chan_class;
+	const struct ah_class *op_class;
+	int ret;
+	int oper_freq;
+	int oper_chwidth;
+	u8 prim_chwidth;
+	int s1g_chan_center;
+	int s1g_prim_chan;
+	int s1g_prim_global_op_class = 0;
+
+	oper_chwidth = morse_s1g_op_class_to_ch_width(iface->conf->s1g_op_class);
+	if (oper_chwidth < 0) {
+		wpa_printf(MSG_ERROR,
+			"error determining S1G operating channel width from operating class (%d)",
+			iface->conf->s1g_op_class);
+		return -1;
+	} else {
+		wpa_printf(MSG_DEBUG, "S1G width: %d MHz", oper_chwidth);
+	}
+
+	switch (iface->conf->s1g_prim_chwidth) {
+	case S1G_PRIM_CHWIDTH_1:
+		prim_chwidth = 1;
+		break;
+	case S1G_PRIM_CHWIDTH_2:
+		prim_chwidth = 2;
+		break;
+	default:
+	    wpa_printf(MSG_ERROR, "error found in config file, invalid "
+		       "prim_chwidth");
+	    return -1;
+	}
+
+	if (prim_chwidth > oper_chwidth ) {
+		wpa_printf(MSG_ERROR, "S1G primary channel bandwidth cannot "
+			   "exceed operating channel bandwidth");
+		return -1;
+	}
+
+	if (iface->conf->acs) {
+		int s1g_chan;
+		wpa_printf(MSG_DEBUG, "setup interface in ACS mode");
+		s1g_chan = morse_s1g_op_class_first_chan(iface->conf->s1g_op_class);
+		if (s1g_chan < 0) {
+			wpa_printf(MSG_ERROR, "no valid S1G channels for op class %d",
+					iface->conf->s1g_op_class);
+		} else {
+			wpa_printf(MSG_DEBUG, "morse_cli channel using %d for initial config",
+					s1g_chan);
+		}
+		oper_freq = morse_s1g_op_class_chan_to_freq(
+			iface->conf->s1g_op_class, s1g_chan);
+
+		if (oper_freq < 0)
+		{
+			wpa_printf(MSG_ERROR,
+					"S1G frequency not found from channel map class %d chan %u",
+					iface->conf->s1g_op_class, s1g_chan);
+			return -1;
+		}
+		s1g_prim_chan = morse_cc_get_primary_s1g_channel(
+							oper_chwidth, prim_chwidth, s1g_chan,
+							iface->conf->s1g_prim_1mhz_chan_index,
+							iface->conf->op_country);
+	} else {
+		int ht_center_chan = morse_ht_chan_to_ht_chan_center(
+				iface->conf, iface->conf->channel);
+		oper_freq = morse_s1g_op_class_ht_chan_to_s1g_freq(
+				iface->conf->s1g_op_class, ht_center_chan);
+		if (oper_freq < 0) {
+			wpa_printf(MSG_ERROR, "S1G frequency not found from channel map"
+					" class %d ht chan %u",
+					iface->conf->s1g_op_class, ht_center_chan);
+		} else {
+			wpa_printf(MSG_DEBUG, "S1G freq %d kHz for class %d ht chan %d",
+					oper_freq, iface->conf->s1g_op_class, ht_center_chan);
+		}
+		s1g_chan_center = morse_ht_chan_to_s1g_chan(ht_center_chan);
+		s1g_prim_chan = morse_cc_get_primary_s1g_channel(
+							oper_chwidth, prim_chwidth, s1g_chan_center,
+							iface->conf->s1g_prim_1mhz_chan_index,
+							iface->conf->op_country);
+	}
+
+	prim_chan_class = morse_s1g_ch_to_op_class(prim_chwidth, iface->conf->op_country,
+						s1g_prim_chan);
+	if (prim_chan_class)
+		s1g_prim_global_op_class = prim_chan_class->global_op_class;
+
+	/* TODO: specify/define primary 1mhz channel by channel number rather than index
+	 * note that this will require changes to morsectrl/morse_cli and the driver
+	 */
+	if (iface->conf->s1g_prim_1mhz_chan_index >= oper_chwidth) {
+		wpa_printf(MSG_ERROR, "1MHz primary channel index is too large for operating BW");
+		return -1;
+	}
+
+	ret = morse_set_channel(iface->conf->bss[0]->iface, oper_freq, oper_chwidth, prim_chwidth,
+			iface->conf->s1g_prim_1mhz_chan_index);
+
+	/* The firmware uses this return code exclusively for an unsupported / disabled channel */
+	if (ret == 1) {
+		wpa_printf(MSG_ERROR,
+			"Channel disabled due to board specific rules - stopping the interface");
+		return -1;
+	} else if (ret) {
+		wpa_printf(MSG_ERROR, "Failed to set the channel (%d)", ret);
+	}
+
+	if (s1g_prim_global_op_class &&
+	    morse_s1g_op_class_valid(iface->conf->s1g_op_class, &op_class)) {
+		ret = morse_set_s1g_op_class(iface->conf->bss[0]->iface,
+					op_class->s1g_op_class, s1g_prim_global_op_class);
+
+		/* Eat the return code and continue on, so WFA/sigma DUT don't break when trying
+		 * to move channels
+		 */
+		if (ret != 0) {
+			wpa_printf(MSG_ERROR, "Failed to set device op_class (%d)", ret);
+		}
+	}
 
 	/*
 	 * It is possible that setup_interface() is called after the interface
@@ -2050,7 +2309,7 @@ static int configured_fixed_chan_to_freq(struct hostapd_iface *iface)
 		return 0;
 	if (iface->conf->op_class) {
 		freq = ieee80211_chan_to_freq(NULL, iface->conf->op_class,
-					      iface->conf->channel);
+				      iface->conf->channel);
 		if (freq < 0) {
 			wpa_printf(MSG_INFO,
 				   "Could not convert op_class %u channel %u to operating frequency",
@@ -2459,6 +2718,12 @@ static int hostapd_setup_interface_complete_sync(struct hostapd_iface *iface,
 			   hostapd_hw_mode_txt(iface->conf->hw_mode),
 			   iface->conf->channel, iface->freq);
 
+		if (hostapd_set_current_hw_info(iface, iface->freq)) {
+			wpa_printf(MSG_ERROR,
+				   "Failed to set current hardware info");
+			goto fail;
+		}
+
 #ifdef NEED_AP_MLME
 		/* Handle DFS only if it is not offloaded to the driver */
 		if (!(iface->drv_flags & WPA_DRIVER_FLAGS_DFS_OFFLOAD)) {
@@ -2597,6 +2862,13 @@ static int hostapd_setup_interface_complete_sync(struct hostapd_iface *iface,
 			   "configuration", __func__);
 		goto fail;
 	}
+
+#ifdef CONFIG_IEEE80211AH
+#ifdef CONFIG_MESH
+	if (!(hapd->conf->mesh & MESH_ENABLED))
+#endif /* CONFIG_MESH */
+		hostapd_send_raw_config(hapd->conf);
+#endif /* CONFIG_IEEE80211AH */
 
 	/*
 	 * WPS UPnP module can be initialized only when the "upnp_iface" is up.
@@ -2848,6 +3120,10 @@ hostapd_alloc_bss_data(struct hostapd_iface *hapd_iface,
 	hapd->iconf = conf;
 	hapd->conf = bss;
 	hapd->iface = hapd_iface;
+	if (bss && bss->config_id)
+		hapd->config_id = strdup(bss->config_id);
+	else
+		hapd->config_id = NULL;
 	if (conf)
 		hapd->driver = conf->driver;
 	hapd->ctrl_sock = -1;
@@ -3342,10 +3618,10 @@ hostapd_interface_init_bss(struct hapd_interfaces *interfaces, const char *phy,
 static void hostapd_cleanup_driver(const struct wpa_driver_ops *driver,
 				   void *drv_priv, struct hostapd_iface *iface)
 {
-#ifdef CONFIG_IEEE80211BE
 	if (!driver || !driver->hapd_deinit || !drv_priv)
 		return;
 
+#ifdef CONFIG_IEEE80211BE
 	/* In case of non-ML operation, de-init. But if ML operation exist,
 	 * even if that's the last BSS in the interface, the driver (drv) could
 	 * be in use for a different AP MLD. Hence, need to check if drv is
@@ -3354,8 +3630,10 @@ static void hostapd_cleanup_driver(const struct wpa_driver_ops *driver,
 		driver->hapd_deinit(drv_priv);
 	} else if (hostapd_mld_is_first_bss(iface->bss[0]) &&
 		   driver->is_drv_shared &&
-		   !driver->is_drv_shared(drv_priv, iface->bss[0])) {
+		   !driver->is_drv_shared(drv_priv,
+					  iface->bss[0]->mld_link_id)) {
 		driver->hapd_deinit(drv_priv);
+		hostapd_mld_interface_freed(iface->bss[0]);
 	} else if (hostapd_if_link_remove(iface->bss[0],
 					  WPA_IF_AP_BSS,
 					  iface->bss[0]->conf->iface,
@@ -4088,7 +4366,7 @@ int hostapd_csa_in_progress(struct hostapd_iface *iface)
 
 #ifdef NEED_AP_MLME
 
-static void free_beacon_data(struct beacon_data *beacon)
+void free_beacon_data(struct beacon_data *beacon)
 {
 	os_free(beacon->head);
 	beacon->head = NULL;
@@ -4363,11 +4641,33 @@ static int hostapd_fill_csa_settings(struct hostapd_data *hapd,
 	hostapd_change_config_freq(iface->bss[0], iface->conf,
 				   &old_freq, NULL);
 
+#ifdef CONFIG_IEEE80211AH
+	wpa_printf(MSG_INFO, "%s : ECSA info op_bw=%d, prim_bw=%d, vht=%d, ht=%d, change to oldconfig: ht=%d, vht=%d\n",
+										 __func__,
+										 settings->freq_params.bandwidth,
+										 settings->freq_params.prim_bandwidth,
+										 settings->freq_params.vht_enabled,
+										 settings->freq_params.ht_enabled,
+										 old_freq.ht_enabled,
+										 old_freq.vht_enabled);
+	/* Enable 11ac if we are switching to 2/4/8 MHz channel */
+	if (settings->freq_params.bandwidth > 20) {
+		iface->conf->ieee80211ac = true;
+	}
+#endif
+
 	if (ret)
 		return ret;
 
 	/* set channel switch parameters for csa ie */
 	hapd->cs_freq_params = settings->freq_params;
+#ifdef CONFIG_IEEE80211AH
+	/* set S1G channel switch parameters for csa ie */
+	if (settings->s1g_freq_params.s1g_oper_freq >  MIN_S1G_FREQ_KHZ &&
+		settings->s1g_freq_params.s1g_oper_freq < MAX_S1G_FREQ_KHZ) {
+		hapd->cs_s1g_freq_params = settings->s1g_freq_params;
+	}
+#endif
 	hapd->cs_count = settings->cs_count;
 	hapd->cs_block_tx = settings->block_tx;
 
@@ -4468,12 +4768,49 @@ int hostapd_switch_channel(struct hostapd_data *hapd,
 }
 
 
+int hostapd_force_channel_switch(struct hostapd_iface *iface,
+				 struct csa_settings settings)
+{
+	int ret = 0;
+
+	if (!settings.freq_params.channel) {
+		/* Check if the new channel is supported */
+		settings.freq_params.channel = hostapd_hw_get_channel(
+			iface->bss[0], settings.freq_params.freq);
+		if (!settings.freq_params.channel)
+			return -1;
+	}
+
+	ret = hostapd_disable_iface(iface);
+	if (ret) {
+		wpa_printf(MSG_DEBUG, "Failed to disable the interface");
+		return ret;
+	}
+
+	hostapd_chan_switch_config(iface->bss[0], &settings.freq_params);
+	ret = hostapd_change_config_freq(iface->bss[0], iface->conf,
+					 &settings.freq_params, NULL);
+	if (ret) {
+		wpa_printf(MSG_DEBUG,
+			   "Failed to set the new channel in config");
+		return ret;
+	}
+
+	ret = hostapd_enable_iface(iface);
+	if (ret)
+		wpa_printf(MSG_DEBUG, "Failed to enable the interface");
+
+	return ret;
+}
+
+
 void
 hostapd_switch_channel_fallback(struct hostapd_iface *iface,
 				const struct hostapd_freq_params *freq_params)
 {
 	u8 seg0_idx = 0, seg1_idx = 0;
 	enum oper_chan_width bw = CONF_OPER_CHWIDTH_USE_HT;
+	u8 op_class, chan = 0;
 
 	wpa_printf(MSG_DEBUG, "Restarting all CSA-related BSSes");
 
@@ -4513,6 +4850,15 @@ hostapd_switch_channel_fallback(struct hostapd_iface *iface,
 	iface->freq = freq_params->freq;
 	iface->conf->channel = freq_params->channel;
 	iface->conf->secondary_channel = freq_params->sec_channel_offset;
+	if (ieee80211_freq_to_channel_ext(freq_params->freq,
+					  freq_params->sec_channel_offset, bw,
+					  &op_class, &chan) ==
+	    NUM_HOSTAPD_MODES ||
+	    chan != freq_params->channel)
+		wpa_printf(MSG_INFO, "CSA: Channel mismatch: %d -> %d",
+			   freq_params->channel, chan);
+
+	iface->conf->op_class = op_class;
 	hostapd_set_oper_centr_freq_seg0_idx(iface->conf, seg0_idx);
 	hostapd_set_oper_centr_freq_seg1_idx(iface->conf, seg1_idx);
 	hostapd_set_oper_chwidth(iface->conf, bw);
@@ -4520,6 +4866,20 @@ hostapd_switch_channel_fallback(struct hostapd_iface *iface,
 	iface->conf->ieee80211ac = freq_params->vht_enabled;
 	iface->conf->ieee80211ax = freq_params->he_enabled;
 	iface->conf->ieee80211be = freq_params->eht_enabled;
+
+#ifdef CONFIG_IEEE80211AH
+	/* Update S1G parameters in hostapd conf */
+	struct hostapd_data *hapd = container_of(freq_params, struct hostapd_data, cs_freq_params);
+
+	if ((hapd->cs_s1g_freq_params.s1g_oper_freq > MIN_S1G_FREQ_KHZ) &&
+		(hapd->cs_s1g_freq_params.s1g_oper_freq < MAX_S1G_FREQ_KHZ)) {
+
+		iface->conf->s1g_op_class = hapd->cs_s1g_freq_params.s1g_global_op_class;
+		iface->conf->s1g_prim_chwidth = hapd->cs_s1g_freq_params.s1g_prim_bw - 1;
+		iface->conf->s1g_prim_1mhz_chan_index =
+			hapd->cs_s1g_freq_params.s1g_prim_channel_index_1MHz;
+	}
+#endif
 
 	/*
 	 * cs_params must not be cleared earlier because the freq_params
@@ -4543,8 +4903,8 @@ void hostapd_cleanup_cca_params(struct hostapd_data *hapd)
 }
 
 
-static int hostapd_fill_cca_settings(struct hostapd_data *hapd,
-				     struct cca_settings *settings)
+int hostapd_fill_cca_settings(struct hostapd_data *hapd,
+			      struct cca_settings *settings)
 {
 	struct hostapd_iface *iface = hapd->iface;
 	u8 old_color;
@@ -4552,6 +4912,12 @@ static int hostapd_fill_cca_settings(struct hostapd_data *hapd,
 
 	if (!iface || iface->conf->he_op.he_bss_color_disabled)
 		return -1;
+
+	settings->link_id = -1;
+#ifdef CONFIG_IEEE80211BE
+	if (hapd->conf->mld_ap)
+		settings->link_id = hapd->mld_link_id;
+#endif /* CONFIG_IEEE80211BE */
 
 	old_color = iface->conf->he_op.he_bss_color;
 	iface->conf->he_op.he_bss_color = hapd->cca_color;
@@ -4881,6 +5247,18 @@ struct hostapd_data * hostapd_mld_get_first_bss(struct hostapd_data *hapd)
 		return NULL;
 
 	return mld->fbss;
+}
+
+
+void hostapd_mld_interface_freed(struct hostapd_data *hapd)
+{
+	struct hostapd_data *link_bss = NULL;
+
+	if (!hapd || !hapd->conf->mld_ap)
+		return;
+
+	for_each_mld_link(link_bss, hapd)
+		link_bss->drv_priv = NULL;
 }
 
 #endif /* CONFIG_IEEE80211BE */

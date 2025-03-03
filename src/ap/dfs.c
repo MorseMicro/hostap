@@ -2,6 +2,7 @@
  * DFS - Dynamic Frequency Selection
  * Copyright (c) 2002-2013, Jouni Malinen <j@w1.fi>
  * Copyright (c) 2013-2017, Qualcomm Atheros, Inc.
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -253,6 +254,13 @@ static int dfs_find_channel(struct hostapd_iface *iface,
 	for (i = 0; i < mode->num_channels; i++) {
 		chan = &mode->channels[i];
 
+		if (!chan_in_current_hw_info(iface->current_hw_info, chan)) {
+			wpa_printf(MSG_DEBUG,
+				   "DFS: channel %d (%d) is not under current hardware index",
+				   chan->freq, chan->chan);
+			continue;
+		}
+
 		/* Skip HT40/VHT incompatible channels */
 		if (iface->conf->ieee80211n &&
 		    iface->conf->secondary_channel &&
@@ -451,8 +459,9 @@ static int dfs_check_chans_radar(struct hostapd_iface *iface,
 	mode = iface->current_mode;
 
 	for (i = 0; i < n_chans; i++) {
-		if (start_chan_idx + i >= mode->num_channels)
+		if ((start_chan_idx + i) >= mode->num_channels)
 			break;
+
 		channel = &mode->channels[start_chan_idx + i];
 		if (channel->flag & HOSTAPD_CHAN_RADAR)
 			res++;

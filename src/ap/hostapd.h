@@ -1,6 +1,7 @@
 /*
  * hostapd / Initialization and configuration
  * Copyright (c) 2002-2014, Jouni Malinen <j@w1.fi>
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -47,7 +48,7 @@ struct hostapd_iface;
 struct hostapd_mld;
 
 struct hapd_interfaces {
-	int (*reload_config)(struct hostapd_iface *iface);
+	int (*reload_config)(struct hostapd_iface *iface, int reconf);
 	struct hostapd_config * (*config_read_cb)(const char *config_fname);
 	int (*ctrl_iface_init)(struct hostapd_data *hapd);
 	void (*ctrl_iface_deinit)(struct hostapd_data *hapd);
@@ -139,6 +140,19 @@ enum pbc_status {
 	WPS_PBC_STATUS_OVERLAP
 };
 
+enum s1g_oper_chwidth {
+	S1G_OPER_CHWIDTH_1,
+	S1G_OPER_CHWIDTH_2,
+	S1G_OPER_CHWIDTH_4,
+	S1G_OPER_CHWIDTH_8,
+	S1G_OPER_CHWIDTH_16,
+};
+
+enum s1g_prim_chwidth {
+	S1G_PRIM_CHWIDTH_1,
+	S1G_PRIM_CHWIDTH_2,
+};
+
 struct wps_stat {
 	enum wps_status status;
 	enum wps_error_indication failure_reason;
@@ -167,6 +181,21 @@ struct hostapd_sae_commit_queue {
 	u8 msg[];
 };
 
+struct mld_link_info {
+	u8 valid:1;
+	u8 nstr_bitmap_len:2;
+	u8 local_addr[ETH_ALEN];
+	u8 peer_addr[ETH_ALEN];
+
+	u8 nstr_bitmap[2];
+
+	u16 capability;
+
+	u16 status;
+	u16 resp_sta_profile_len;
+	u8 *resp_sta_profile;
+};
+
 /**
  * struct hostapd_data - hostapd per-BSS data structure
  */
@@ -174,6 +203,7 @@ struct hostapd_data {
 	struct hostapd_iface *iface;
 	struct hostapd_config *iconf;
 	struct hostapd_bss_config *conf;
+	char *config_id;
 	int interface_added; /* virtual interface added for this BSS */
 	unsigned int started:1;
 	unsigned int disabled:1;
@@ -306,6 +336,10 @@ struct hostapd_data {
 
 	/* channel switch parameters */
 	struct hostapd_freq_params cs_freq_params;
+#ifdef CONFIG_IEEE80211AH
+	/* S1G channel switch parameters */
+	struct hostapd_s1g_freq_params cs_s1g_freq_params;
+#endif
 	u8 cs_count;
 	int cs_block_tx;
 	unsigned int cs_c_off_beacon;
@@ -352,6 +386,9 @@ struct hostapd_data {
 	struct wpabuf *mesh_pending_auth;
 	struct os_reltime mesh_pending_auth_time;
 	u8 mesh_required_peer[ETH_ALEN];
+#ifdef CONFIG_IEEE80211AH
+	u8 mesh_kickout_peer_addr[ETH_ALEN];
+#endif /* CONFIG_IEEE80211AH */
 #endif /* CONFIG_MESH */
 
 #ifdef CONFIG_SQLITE
@@ -476,6 +513,10 @@ struct hostapd_data {
 	struct hostapd_mld *mld;
 	struct dl_list link;
 	u8 mld_link_id;
+
+	/* Cached partner info for ML probe response */
+	struct mld_link_info partner_links[MAX_NUM_MLD_LINKS];
+
 #ifdef CONFIG_TESTING_OPTIONS
 	u8 eht_mld_link_removal_count;
 #endif /* CONFIG_TESTING_OPTIONS */
@@ -682,6 +723,7 @@ struct hostapd_iface {
 
 #ifdef CONFIG_ACS
 	unsigned int acs_num_completed_scans;
+	unsigned int acs_num_retries;
 #endif /* CONFIG_ACS */
 
 	void (*scan_cb)(struct hostapd_iface *iface);
@@ -710,13 +752,17 @@ struct hostapd_iface {
 	bool is_no_ir;
 
 	bool is_ch_switch_dfs; /* Channel switch from ACS to DFS */
+
+	struct hostapd_multi_hw_info *multi_hw_info;
+	unsigned int num_multi_hws;
+	struct hostapd_multi_hw_info *current_hw_info;
 };
 
 /* hostapd.c */
 int hostapd_for_each_interface(struct hapd_interfaces *interfaces,
 			       int (*cb)(struct hostapd_iface *iface,
 					 void *ctx), void *ctx);
-int hostapd_reload_config(struct hostapd_iface *iface);
+int hostapd_reload_config(struct hostapd_iface *iface, int reconf);
 void hostapd_reconfig_encryption(struct hostapd_data *hapd);
 struct hostapd_data *
 hostapd_alloc_bss_data(struct hostapd_iface *hapd_iface,
@@ -752,6 +798,8 @@ void hostapd_chan_switch_config(struct hostapd_data *hapd,
 				struct hostapd_freq_params *freq_params);
 int hostapd_switch_channel(struct hostapd_data *hapd,
 			   struct csa_settings *settings);
+int hostapd_force_channel_switch(struct hostapd_iface *iface,
+				 struct csa_settings settings);
 void
 hostapd_switch_channel_fallback(struct hostapd_iface *iface,
 				const struct hostapd_freq_params *freq_params);
@@ -823,9 +871,14 @@ int hostapd_mld_add_link(struct hostapd_data *hapd);
 int hostapd_mld_remove_link(struct hostapd_data *hapd);
 struct hostapd_data * hostapd_mld_get_first_bss(struct hostapd_data *hapd);
 
+void free_beacon_data(struct beacon_data *beacon);
+int hostapd_fill_cca_settings(struct hostapd_data *hapd,
+			      struct cca_settings *settings);
+
 #ifdef CONFIG_IEEE80211BE
 
 bool hostapd_mld_is_first_bss(struct hostapd_data *hapd);
+void hostapd_mld_interface_freed(struct hostapd_data *hapd);
 
 #define for_each_mld_link(partner, self) \
 	dl_list_for_each(partner, &self->mld->links, struct hostapd_data, link)

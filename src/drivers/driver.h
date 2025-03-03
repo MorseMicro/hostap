@@ -1,6 +1,7 @@
 /*
  * Driver interface definition
  * Copyright (c) 2003-2017, Jouni Malinen <j@w1.fi>
+ * Copyright 2023 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -314,6 +315,27 @@ struct hostapd_hw_modes {
 	 * eht_capab - EHT (IEEE 802.11be) capabilities
 	 */
 	struct eht_capabilities eht_capab[IEEE80211_MODE_NUM];
+};
+
+
+/**
+ * struct hostapd_multi_hw_info: Supported multiple underlying hardware info
+ */
+struct hostapd_multi_hw_info {
+	/**
+	 * hw_idx - Hardware index
+	 */
+	u8 hw_idx;
+
+	/**
+	 * start_freq - Frequency range start in MHz
+	 */
+	int start_freq;
+
+	/**
+	 * end_freq - Frequency range end in MHz
+	 */
+	int end_freq;
 };
 
 
@@ -789,6 +811,41 @@ enum wps_mode {
 };
 
 /**
+ * struct hostapd_s1g_freq_params - S1G Channel parameters
+ */
+struct hostapd_s1g_freq_params {
+	/**
+	 * s1g_global_op_class - Global operating class
+	 */
+	int s1g_global_op_class;
+
+	/**
+	 * s1g_prim_bw - Primary channel bandwidth
+	 */
+	int s1g_prim_bw;
+
+	/**
+	 * s1g_prim_channel_index_1MHz - Index of primary 1MHz channel
+	 */
+	int s1g_prim_channel_index_1MHz;
+
+	/**
+	 * s1g_oper_freq - New S1g Operating frequency
+	 */
+	int s1g_oper_freq;
+
+	/**
+	 * s1g_oper_bw - New S1g Operating channel bandwidth
+	 */
+	int s1g_oper_bw;
+
+	/**
+	 * s1g_prim_ch_global_op_class - Global operating class for primary chan
+	 */
+	int s1g_prim_ch_global_op_class;
+};
+
+/**
  * struct hostapd_freq_params - Channel parameters
  */
 struct hostapd_freq_params {
@@ -855,6 +912,13 @@ struct hostapd_freq_params {
 	 * for IEEE 802.11ay EDMG configuration.
 	 */
 	struct ieee80211_edmg_config edmg;
+
+#ifdef CONFIG_IEEE80211AH
+	/**
+	 * prim_bandwidth - S1G Primary Channel bandwidth in MHz (1 or 2)
+	 */
+	int prim_bandwidth;
+#endif /* CONFIG_IEEE80211AH */
 
 	/**
 	 * radar_background - Whether radar/CAC background is requested
@@ -1363,6 +1427,12 @@ struct wpa_driver_associate_params {
 	 * mld_params - MLD association parameters
 	 */
 	struct wpa_driver_mld_params mld_params;
+
+
+	/**
+	 * rsn_overriding - wpa_supplicant RSN overriding support
+	 */
+	bool rsn_overriding;
 };
 
 enum hide_ssid {
@@ -1857,6 +1927,8 @@ struct wpa_driver_mesh_bss_params {
 #define WPA_DRIVER_MESH_CONF_FLAG_HT_OP_MODE		0x00000008
 #define WPA_DRIVER_MESH_CONF_FLAG_RSSI_THRESHOLD	0x00000010
 #define WPA_DRIVER_MESH_CONF_FLAG_FORWARDING		0x00000020
+#define WPA_DRIVER_MESH_CONF_FLAG_ROOTMODE		0x00000040
+#define WPA_DRIVER_MESH_CONF_FLAG_GATE_ANNOUNCEMENTS	0x00000080
 	/*
 	 * TODO: Other mesh configuration parameters would go here.
 	 * See NL80211_MESHCONF_* for all the mesh config parameters.
@@ -1868,6 +1940,8 @@ struct wpa_driver_mesh_bss_params {
 	int rssi_threshold;
 	int forwarding;
 	u16 ht_opmode;
+	int dot11MeshHWMPRootMode;
+	int dot11MeshGateAnnouncements;
 };
 
 struct wpa_driver_mesh_join_params {
@@ -2330,6 +2404,8 @@ struct wpa_driver_capa {
 #define WPA_DRIVER_FLAGS2_SAE_OFFLOAD_AP	0x0000000000100000ULL
 /** Driver supports TWT responder in HT and VHT modes */
 #define WPA_DRIVER_FLAGS2_HT_VHT_TWT_RESPONDER	0x0000000000200000ULL
+/** Driver supports RSN override elements */
+#define WPA_DRIVER_FLAGS2_RSN_OVERRIDE_STA	0x0000000000400000ULL
 	u64 flags2;
 
 #define FULL_AP_CLIENT_STATE_SUPP(drv_flags) \
@@ -2739,6 +2815,9 @@ struct csa_settings {
 	u8 block_tx;
 
 	struct hostapd_freq_params freq_params;
+#ifdef CONFIG_IEEE80211AH
+	struct hostapd_s1g_freq_params s1g_freq_params;
+#endif /* CONFIG_IEEE80211AH */
 	struct beacon_data beacon_csa;
 	struct beacon_data beacon_after;
 
@@ -2761,6 +2840,7 @@ struct csa_settings {
  * @counter_offset_beacon: Offset to the count field in Beacon frame tail
  * @counter_offset_presp: Offset to the count field in Probe Response frame
  * @ubpr: Unsolicited broadcast Probe Response frame data
+ * @link_id: If >= 0 indicates the link of the AP MLD to configure
  */
 struct cca_settings {
 	u8 cca_count;
@@ -2773,6 +2853,8 @@ struct cca_settings {
 	u16 counter_offset_presp;
 
 	struct unsol_bcast_probe_resp ubpr;
+
+	int link_id;
 };
 
 /* TDLS peer capabilities for send_tdls_mgmt() */
@@ -5191,15 +5273,19 @@ struct wpa_driver_ops {
 	/**
 	 * is_drv_shared - Check whether the driver interface is shared
 	 * @priv: Private driver interface data from init()
-	 * @bss_ctx: BSS context for %WPA_IF_AP_BSS interfaces
+	 * @link_id: Link ID to match
+	 * Returns: true if it is being used or else false.
 	 *
 	 * Checks whether the driver interface is being used by other partner
 	 * BSS(s) or not. This is used to decide whether the driver interface
 	 * needs to be deinitilized when one interface is getting deinitialized.
 	 *
-	 * Returns: true if it is being used or else false.
+	 * NOTE: @link_id will be used only when there is only one BSS
+	 * present and if that single link is active. In that case, the
+	 * link ID is matched with the active link_id to decide whether the
+	 * driver interface is being used by other partner BSS(s).
 	 */
-	bool (*is_drv_shared)(void *priv, void *bss_ctx);
+	bool (*is_drv_shared)(void *priv, int link_id);
 
 	/**
 	 * link_sta_remove - Remove a link STA from an MLD STA
@@ -5215,6 +5301,18 @@ struct wpa_driver_ops {
 			      const u8 *match, size_t match_len,
 			      bool multicast);
 #endif /* CONFIG_TESTING_OPTIONS */
+
+	/**
+	 * get_multi_hw_info - Get multiple underlying hardware information
+	 *		       (hardware IDx and supported frequency range)
+	 * @priv: Private driver interface data
+	 * @num_multi_hws: Variable for returning the number of returned
+	 *	hardware info data
+	 * Returns: Pointer to allocated multiple hardware data on success
+	 * or %NULL on failure. Caller is responsible for freeing this.
+	 */
+	struct hostapd_multi_hw_info *
+	(*get_multi_hw_info)(void *priv, unsigned int *num_multi_hws);
 };
 
 /**
@@ -5842,6 +5940,11 @@ enum wpa_event_type {
 	 * EVENT_LINK_RECONFIG - Notification that AP links removed
 	 */
 	EVENT_LINK_RECONFIG,
+
+	/**
+	 * EVENT_MLD_INTERFACE_FREED - Notification of AP MLD interface removal
+	 */
+	EVENT_MLD_INTERFACE_FREED,
 };
 
 
@@ -6796,6 +6899,7 @@ union wpa_event_data {
 	 */
 	struct bss_color_collision {
 		u64 bitmap;
+		int link_id;
 	} bss_color_collision;
 
 	/**
@@ -6855,6 +6959,15 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
  */
 void wpa_supplicant_event_global(void *ctx, enum wpa_event_type event,
 				 union wpa_event_data *data);
+
+#if defined(CONFIG_MESH) && defined(CONFIG_IEEE80211AH)
+/**
+ * wpa_supplicant_mesh_peer_event - Handles UMAC driver's vendor event.
+ * @ctx:  supplicant context
+ * @peer_addr: mesh peer address
+ */
+void wpa_supplicant_mesh_peer_event(void *ctx, u8 *peer_addr);
+#endif
 
 /*
  * The following inline functions are provided for convenience to simplify

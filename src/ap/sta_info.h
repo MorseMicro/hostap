@@ -1,6 +1,7 @@
 /*
  * hostapd / Station table
  * Copyright (c) 2002-2017, Jouni Malinen <j@w1.fi>
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -81,20 +82,7 @@ struct mld_info {
 		u16 mld_capa;
 	} common_info;
 
-	struct mld_link_info {
-		u8 valid:1;
-		u8 nstr_bitmap_len:2;
-		u8 local_addr[ETH_ALEN];
-		u8 peer_addr[ETH_ALEN];
-
-		u8 nstr_bitmap[2];
-
-		u16 capability;
-
-		u16 status;
-		u16 resp_sta_profile_len;
-		u8 *resp_sta_profile;
-	} links[MAX_NUM_MLD_LINKS];
+	struct mld_link_info links[MAX_NUM_MLD_LINKS];
 };
 
 struct sta_info {
@@ -327,6 +315,10 @@ struct sta_info {
 #ifdef CONFIG_PASN
 	struct pasn_data *pasn;
 #endif /* CONFIG_PASN */
+
+#ifdef CONFIG_IEEE80211AH
+	u8 raw_priority;
+#endif /* CONFIG_IEEE80211AH */
 
 #ifdef CONFIG_IEEE80211BE
 	struct mld_info mld_info;

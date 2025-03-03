@@ -1,6 +1,7 @@
 /*
  * hostapd / Configuration helper functions
  * Copyright (c) 2003-2024, Jouni Malinen <j@w1.fi>
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -47,6 +48,10 @@ static void hostapd_config_free_vlan(struct hostapd_bss_config *bss)
 
 void hostapd_config_defaults_bss(struct hostapd_bss_config *bss)
 {
+#ifdef CONFIG_IEEE80211AH
+	int ii;
+#endif
+
 	dl_list_init(&bss->anqp_elem);
 
 	bss->logger_syslog_level = HOSTAPD_LEVEL_INFO;
@@ -122,9 +127,10 @@ void hostapd_config_defaults_bss(struct hostapd_bss_config *bss)
 #endif /* CONFIG_IEEE80211R_AP */
 
 	bss->radius_das_time_window = 300;
+	bss->radius_require_message_authenticator = 1;
 
 	bss->anti_clogging_threshold = 5;
-	bss->sae_sync = 5;
+	bss->sae_sync = 3;
 
 	bss->gas_frag_limit = 1400;
 
@@ -176,6 +182,22 @@ void hostapd_config_defaults_bss(struct hostapd_bss_config *bss)
 	bss->pasn_comeback_after = 10;
 	bss->pasn_noauth = 1;
 #endif /* CONFIG_PASN */
+
+#ifdef CONFIG_IEEE80211AH
+	bss->raw_enabled = false;
+
+	for(ii = 0; ii < MORSE_MAX_RAWS; ii++) {
+		bss->raw[ii].enabled = false;
+		bss->raw[ii].start_time_us = 4096;
+		bss->raw[ii].duration_us = 26900;
+		bss->raw[ii].slots = 1;
+		bss->raw[ii].cross_slot = false;
+		bss->raw[ii].bcn_spread.max_spread = 0;
+		bss->raw[ii].bcn_spread.nominal_stas_per_bcn = 0;
+		bss->raw[ii].periodic.period = 0;
+		bss->raw[ii].periodic.start_offset = 0;
+	}
+#endif /* CONFIG_IEEE80211AH */
 }
 
 
@@ -302,6 +324,10 @@ struct hostapd_config * hostapd_config_defaults(void)
 #ifdef CONFIG_AIRTIME_POLICY
 	conf->airtime_update_interval = AIRTIME_DEFAULT_UPDATE_INTERVAL;
 #endif /* CONFIG_AIRTIME_POLICY */
+
+#ifdef CONFIG_IEEE80211AH
+	conf->s1g_capab = S1G_CAP0_SGI_ALL;
+#endif /* CONFIG_IEEE80211AH */
 
 	hostapd_set_and_check_bw320_offset(conf, 0);
 
@@ -490,20 +516,33 @@ int hostapd_setup_sae_pt(struct hostapd_bss_config *conf)
 #ifdef CONFIG_SAE
 	struct hostapd_ssid *ssid = &conf->ssid;
 	struct sae_password_entry *pw;
+	int *groups = conf->sae_groups;
+	int default_groups[] = { 19, 0, 0 };
 
 	if ((conf->sae_pwe == SAE_PWE_HUNT_AND_PECK &&
 	     !hostapd_sae_pw_id_in_use(conf) &&
-	     !wpa_key_mgmt_sae_ext_key(conf->wpa_key_mgmt) &&
+	     !wpa_key_mgmt_sae_ext_key(conf->wpa_key_mgmt |
+				       conf->rsn_override_key_mgmt |
+				       conf->rsn_override_key_mgmt_2) &&
 	     !hostapd_sae_pk_in_use(conf)) ||
 	    conf->sae_pwe == SAE_PWE_FORCE_HUNT_AND_PECK ||
-	    !wpa_key_mgmt_sae(conf->wpa_key_mgmt))
+	    !wpa_key_mgmt_sae(conf->wpa_key_mgmt |
+			      conf->rsn_override_key_mgmt |
+			      conf->rsn_override_key_mgmt_2))
 		return 0; /* PT not needed */
+
+	if (!groups) {
+		groups = default_groups;
+		if (wpa_key_mgmt_sae_ext_key(conf->wpa_key_mgmt |
+					     conf->rsn_override_key_mgmt |
+					     conf->rsn_override_key_mgmt_2))
+			default_groups[1] = 20;
+	}
 
 	sae_deinit_pt(ssid->pt);
 	ssid->pt = NULL;
 	if (ssid->wpa_passphrase) {
-		ssid->pt = sae_derive_pt(conf->sae_groups, ssid->ssid,
-					 ssid->ssid_len,
+		ssid->pt = sae_derive_pt(groups, ssid->ssid, ssid->ssid_len,
 					 (const u8 *) ssid->wpa_passphrase,
 					 os_strlen(ssid->wpa_passphrase),
 					 NULL);
@@ -513,8 +552,7 @@ int hostapd_setup_sae_pt(struct hostapd_bss_config *conf)
 
 	for (pw = conf->sae_passwords; pw; pw = pw->next) {
 		sae_deinit_pt(pw->pt);
-		pw->pt = sae_derive_pt(conf->sae_groups, ssid->ssid,
-				       ssid->ssid_len,
+		pw->pt = sae_derive_pt(groups, ssid->ssid, ssid->ssid_len,
 				       (const u8 *) pw->password,
 				       os_strlen(pw->password),
 				       pw->identifier);
@@ -959,6 +997,11 @@ void hostapd_config_free_bss(struct hostapd_bss_config *conf)
 
 #ifdef CONFIG_TESTING_OPTIONS
 	wpabuf_free(conf->own_ie_override);
+	wpabuf_free(conf->rsne_override);
+	wpabuf_free(conf->rsnoe_override);
+	wpabuf_free(conf->rsno2e_override);
+	wpabuf_free(conf->rsnxe_override);
+	wpabuf_free(conf->rsnxoe_override);
 	wpabuf_free(conf->sae_commit_override);
 	wpabuf_free(conf->rsne_override_eapol);
 	wpabuf_free(conf->rsnxe_override_eapol);
@@ -1026,6 +1069,7 @@ void hostapd_config_free(struct hostapd_config *conf)
 
 	for (i = 0; i < conf->num_bss; i++)
 		hostapd_config_free_bss(conf->bss[i]);
+	os_free(conf->config_id);
 	os_free(conf->bss);
 	os_free(conf->supported_rates);
 	os_free(conf->basic_rates);
@@ -1588,12 +1632,13 @@ int hostapd_config_check(struct hostapd_config *conf, int full_config)
 						   conf->eht_bw320_offset);
 #endif /* CONFIG_IEEE80211BE */
 
-	if (full_config && conf->mbssid && !conf->ieee80211ax) {
+#if defined(CONFIG_IEEE80211AX) || defined(CONFIG_IEEE80211AH)
+	if (full_config && conf->mbssid && !(conf->ieee80211ax || conf->ieee80211ah)) {
 		wpa_printf(MSG_ERROR,
-			   "Cannot enable multiple BSSID support without ieee80211ax");
+			   "Cannot enable multiple BSSID support without ieee80211ax/ieee80211ah");
 		return -1;
 	}
-
+#endif
 	for (i = 0; i < conf->num_bss; i++) {
 		if (hostapd_config_check_bss(conf->bss[i], conf, full_config))
 			return -1;

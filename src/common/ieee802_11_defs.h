@@ -2,6 +2,7 @@
  * IEEE 802.11 Frame type definitions
  * Copyright (c) 2002-2019, Jouni Malinen <j@w1.fi>
  * Copyright (c) 2007-2008 Intel Corporation
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -469,10 +470,12 @@
 #define WLAN_EID_DEVICE_LOCATION 204
 #define WLAN_EID_WHITE_SPACE_MAP 205
 #define WLAN_EID_FTM_PARAMETERS 206
+#define WLAN_EID_AID_RESPONSE 211
 #define WLAN_EID_S1G_BCN_COMPAT 213
 #define WLAN_EID_TWT 216
 #define WLAN_EID_S1G_CAPABILITIES 217
 #define WLAN_EID_VENDOR_SPECIFIC 221
+#define WLAN_EID_S1G_CAC 222
 #define WLAN_EID_S1G_OPERATION 232
 #define WLAN_EID_CAG_NUMBER 237
 #define WLAN_EID_AP_CSN 239
@@ -504,6 +507,7 @@
 #define WLAN_EID_EXT_HE_MU_EDCA_PARAMS 38
 #define WLAN_EID_EXT_SPATIAL_REUSE 39
 #define WLAN_EID_EXT_COLOR_CHANGE_ANNOUNCEMENT 42
+#define WLAN_EID_EXT_MAX_CHANNEL_SWITCH_TIME 52
 #define WLAN_EID_EXT_OCV_OCI 54
 #define WLAN_EID_EXT_MULTIPLE_BSSID_CONFIGURATION 55
 #define WLAN_EID_EXT_NON_INHERITANCE 56
@@ -524,6 +528,7 @@
 #define WLAN_EID_EXT_MULTI_LINK_TRAFFIC_INDICATION 110
 #define WLAN_EID_EXT_QOS_CHARACTERISTICS 113
 #define WLAN_EID_EXT_AKM_SUITE_SELECTOR 114
+#define WLAN_EID_EXT_BANDWIDTH_INDICATION 135
 
 /* Extended Capabilities field */
 #define WLAN_EXT_CAPAB_20_40_COEX 0
@@ -616,6 +621,7 @@
 #define WLAN_RSNX_CAPAB_SECURE_RTT 9
 #define WLAN_RSNX_CAPAB_URNM_MFPR_X20 10
 #define WLAN_RSNX_CAPAB_URNM_MFPR 15
+#define WLAN_RSNX_CAPAB_SSID_PROTECTION 21
 
 /* Multiple BSSID element subelements */
 #define WLAN_MBSSID_SUBELEMENT_NONTRANSMITTED_BSSID_PROFILE 0
@@ -1415,6 +1421,28 @@ struct ieee80211_ampe_ie {
 #define CHANWIDTH_160MHZ	2
 #define CHANWIDTH_80P80MHZ	3
 
+/* S1G Defines */
+#define S1G_CAP0_S1G_LONG	((u8) BIT(0))
+#define S1G_CAP0_SGI_1MHZ	((u8) BIT(1))
+#define S1G_CAP0_SGI_2MHZ	((u8) BIT(2))
+#define S1G_CAP0_SGI_4MHZ	((u8) BIT(3))
+#define S1G_CAP0_SGI_8MHZ	((u8) BIT(4))
+#define S1G_CAP0_SGI_16MHZ	((u8) BIT(5))
+#define S1G_CAP0_SGI_ALL	((u8) (S1G_CAP0_SGI_1MHZ | S1G_CAP0_SGI_2MHZ | \
+					S1G_CAP0_SGI_4MHZ | S1G_CAP0_SGI_8MHZ | \
+					S1G_CAP0_SGI_16MHZ))
+
+/** Centralized Authentication Control (CAC) parameters */
+#define S1G_CAC_CONTROL			((u16) BIT(0))	/* 0 CAC, 1 DAC */
+#define S1G_CAC_DEFERRAL		((u16) BIT(1))	/* 0 threshold, 1 deferral */
+#define S1G_CAC_RESERVED		((u16) (BIT(2) | BIT(3) | BIT(4) | BIT(5)))
+#define S1G_CAC_THRESHOLD_MASK		(0xFFC0)	/* CAC threshold */
+#define S1G_CAC_THRESHOLD_SHIFT		(6)
+#define S1G_CAC_THRESHOLD_NOT_SET	(UINT16_MAX)
+#define S1G_CAC_THRESHOLD_MAX		(1023)
+#define S1G_CAC_RANDOM_MAX		(1022)
+#define S1G_CAC_RESCAN_DELAY_MAX_SECS	(10)
+
 #define HE_NSS_MAX_STREAMS			    8
 
 #define OUI_MICROSOFT 0x0050f2 /* Microsoft (also used in Wi-Fi specs)
@@ -1445,6 +1473,14 @@ struct ieee80211_ampe_ie {
 #define QM_IE_OUI_TYPE 0x22
 #define WFA_CAPA_IE_VENDOR_TYPE 0x506f9a23
 #define WFA_CAPA_OUI_TYPE 0x23
+#define WFA_RSNE_OVERRIDE_OUI_TYPE 0x29
+#define WFA_RSNE_OVERRIDE_2_OUI_TYPE 0x2a
+#define WFA_RSNXE_OVERRIDE_OUI_TYPE 0x2b
+#define WFA_RSN_SELECTION_OUI_TYPE 0x2c
+#define RSNE_OVERRIDE_IE_VENDOR_TYPE 0x506f9a29
+#define RSNE_OVERRIDE_2_IE_VENDOR_TYPE 0x506f9a2a
+#define RSNXE_OVERRIDE_IE_VENDOR_TYPE 0x506f9a2b
+#define RSN_SELECTION_IE_VENDOR_TYPE 0x506f9a2c
 
 #define MULTI_AP_SUB_ELEM_TYPE 0x06
 #define MULTI_AP_PROFILE_SUB_ELEM_TYPE 0x07
@@ -2861,6 +2897,33 @@ enum ieee80211_eht_ml_sub_elem {
 	EHT_ML_SUB_ELEM_VENDOR = 221,
 	EHT_ML_SUB_ELEM_FRAGMENT = 254,
 };
+
+/* IEEE P802.11be/D7.0, 9.4.2.329 (Bandwidth Indication element) defines the
+ * Bandwidth Indication Information field to have the same definition as the
+ * EHT Operation Information field in the EHT Operation element.
+ */
+struct ieee80211_bw_ind_info {
+	u8 control; /* B0..B2: Channel Width */
+	u8 ccfs0;
+	u8 ccfs1;
+	le16 disabled_chan_bitmap; /* 0 or 2 octets */
+} STRUCT_PACKED;
+
+/* Control subfield: Channel Width subfield; see Table 9-417e (Channel width,
+ * CCFS0, and CCFS1 subfields) in IEEE P802.11be/D7.0. */
+#define BW_IND_CHANNEL_WIDTH_20MHZ	EHT_OPER_CHANNEL_WIDTH_20MHZ
+#define BW_IND_CHANNEL_WIDTH_40MHZ	EHT_OPER_CHANNEL_WIDTH_40MHZ
+#define BW_IND_CHANNEL_WIDTH_80MHZ	EHT_OPER_CHANNEL_WIDTH_80MHZ
+#define BW_IND_CHANNEL_WIDTH_160MHZ	EHT_OPER_CHANNEL_WIDTH_160MHZ
+#define BW_IND_CHANNEL_WIDTH_320MHZ	EHT_OPER_CHANNEL_WIDTH_320MHZ
+
+/* IEEE P802.11be/D7.0, 9.4.2.329 (Bandwidth Indication element) */
+struct ieee80211_bw_ind_element {
+	u8 bw_ind_params; /* Bandwidth Indication Parameters */
+	struct ieee80211_bw_ind_info bw_ind_info; /* 3 or 5 octets */
+} STRUCT_PACKED;
+
+#define BW_IND_PARAMETER_DISABLED_SUBCHAN_BITMAP_PRESENT       BIT(1)
 
 /* IEEE P802.11ay/D4.0, 9.4.2.251 - EDMG Operation element */
 #define EDMG_BSS_OPERATING_CHANNELS_OFFSET	6
