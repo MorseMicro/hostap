@@ -1,7 +1,6 @@
 /*
  * BSS table
  * Copyright (c) 2009-2019, Jouni Malinen <j@w1.fi>
- * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.

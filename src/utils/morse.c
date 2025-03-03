@@ -1,8 +1,5 @@
 /*
  * Copyright 2022 Morse Micro
- *
- * This software may be distributed under the terms of the BSD license.
- * See README for more details.
  */
 
 #include "includes.h"
@@ -1684,6 +1681,14 @@ int morse_s1g_validate_csa_params(struct hostapd_iface *iface,	struct csa_settin
 		return MORSE_S1G_RETURN_ERROR;
 	}
 
+	/* Increase the channel switch count by 1 to match the number of Beacons going out
+	 * with ECSA IE. The mac80211 function ieee80211_beacon_get first decrements
+	 * the channel switch count and then uses it in beacon. So if the user gives cs_count
+	 * of 2, actually it sends only 1 Beacon with ECSA IE.
+	 */
+	if (settings->cs_count < UINT8_MAX)
+		settings->cs_count += 1;
+
 	/* Get the start frequency for regdomain based on operating bandwdith*/
 	s1g_start_freq =  morse_s1g_get_start_freq_for_country(
 				iface->conf->op_country, s1g_center_frequency, s1g_bandwidth);
@@ -1904,3 +1909,4 @@ int morse_wnm_oper(const char *ifname, enum wnm_oper oper)
 	return ret;
 }
 #endif
+

@@ -5183,6 +5183,10 @@ void wpa_supplicant_select_network(struct wpa_supplicant *wpa_s,
 	}
 
 	if (ssid) {
+#ifdef CONFIG_CTRL_IFACE_DBUS_NEW
+		if (ssid != wpa_s->current_ssid)
+			wpas_notify_network_changed(wpa_s);
+#endif /* CONFIG_CTRL_IFACE_DBUS_NEW */
 		wpa_s->current_ssid = ssid;
 		eapol_sm_notify_config(wpa_s->eapol, NULL, NULL);
 		wpa_s->connect_without_scan =
@@ -8954,7 +8958,10 @@ void wpas_auth_failed(struct wpa_supplicant *wpa_s, const char *reason,
 {
 	struct wpa_ssid *ssid = wpa_s->current_ssid;
 	int dur;
+	int rand;
+	int i;
 	struct os_reltime now;
+	int backoff_cnt = 0;
 
 	if (ssid == NULL) {
 		wpa_printf(MSG_DEBUG, "Authentication failure but no known "
@@ -8962,11 +8969,13 @@ void wpas_auth_failed(struct wpa_supplicant *wpa_s, const char *reason,
 		return;
 	}
 
-	if (ssid->backoff_cnt > 0)
-		wpa_msg(wpa_s, MSG_DEBUG, "WPA: %d association backoff times installed",
-			ssid->backoff_cnt);
 	if (ssid->key_mgmt == WPA_KEY_MGMT_WPS)
 		return;
+
+	if (ssid->backoffs) {
+		for (i = 0; ssid->backoffs[i]; i++)
+			backoff_cnt++;
+	}
 
 	ssid->auth_failures++;
 
@@ -8981,12 +8990,15 @@ void wpas_auth_failed(struct wpa_supplicant *wpa_s, const char *reason,
 	}
 #endif /* CONFIG_P2P */
 
-	/* Use override backoff time if present */
-	if (ssid->auth_failures <= ssid->backoff_cnt) {
-		dur = ssid->backoffs[ssid->auth_failures - 1] + (os_random() % 10);
+	/* Use a configured backoff time if present */
+	if (ssid->auth_failures <= backoff_cnt) {
+		int rand = os_random() % 10;
+
+		dur = ssid->backoffs[ssid->auth_failures - 1];
 		wpa_msg(wpa_s, MSG_INFO,
-			"WPA: Using configured backoff of %u seconds",
-			dur);
+			"WPA: Using configured backoff of %u + %d random seconds",
+			dur, rand);
+		dur += rand;
 	} else {
 		if (ssid->auth_failures > 50)
 			dur = 300;

@@ -1244,7 +1244,7 @@ int str_starts(const char *str, const char *start)
 /**
  * rssi_to_rcpi - Convert RSSI to RCPI
  * @rssi: RSSI to convert
- * Returns: RCPI corresponding to the given RSSI value, or 255 if not available.
+ * Returns: RCPI corresponding to the given RSSI value.
  *
  * It's possible to estimate RCPI based on RSSI in dBm. This calculation will
  * not reflect the correct value for high rates, but it's good enough for Action
@@ -1252,11 +1252,9 @@ int str_starts(const char *str, const char *start)
  */
 u8 rssi_to_rcpi(int rssi)
 {
-	if (!rssi)
-		return 255; /* not available */
 	if (rssi < -110)
 		return 0;
-	if (rssi > 0)
+	if (rssi >= 0)
 		return 220;
 	return (rssi + 110) * 2;
 }

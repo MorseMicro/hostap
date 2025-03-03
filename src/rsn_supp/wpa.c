@@ -2,7 +2,6 @@
  * WPA Supplicant - WPA state machine and EAPOL-Key processing
  * Copyright (c) 2003-2018, Jouni Malinen <j@w1.fi>
  * Copyright(c) 2015 Intel Deutschland GmbH
- * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.

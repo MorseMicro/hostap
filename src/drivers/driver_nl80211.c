@@ -5,7 +5,6 @@
  * Copyright (c) 2005-2006, Devicescape Software, Inc.
  * Copyright (c) 2007, Johannes Berg <johannes@sipsolutions.net>
  * Copyright (c) 2009-2010, Atheros Communications
- * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -11956,7 +11955,7 @@ static int nl80211_put_mesh_config(struct nl_msg *msg,
 	}
 
 	if ((params->flags & WPA_DRIVER_MESH_CONF_FLAG_GATE_ANNOUNCEMENTS) &&
-	     nla_put_u8(msg, NL80211_MESHCONF_GATE_ANNOUNCEMENTS,
+	     nla_put_u8(msg, NL80211_MESHCONF_GATE_ANNOUNCEMENTS, 
 	     		params->dot11MeshGateAnnouncements) &&
 	     nla_put_u8(msg, NL80211_MESHCONF_CONNECTED_TO_GATE, 1)) {
 		wpa_printf(MSG_ERROR, "nl80211: Failed to set GATE_ANNOUNCEMENTS");

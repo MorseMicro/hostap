@@ -3,7 +3,6 @@
  * Copyright (c) 2017, Qualcomm Atheros, Inc.
  * Copyright (c) 2018-2020, The Linux Foundation
  * Copyright (c) 2021-2022, Qualcomm Innovation Center, Inc.
- * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -261,6 +260,12 @@ static int hostapd_dpp_allow_ir(struct hostapd_data *hapd, unsigned int freq)
 static int hostapd_dpp_pkex_next_channel(struct hostapd_data *hapd,
 					 struct dpp_pkex *pkex)
 {
+	/* Following logic is not S1G compatible. Attempting PKEX on non-adjacent S1G channels
+	 * results in guaranteed failure.
+	 */
+	if (hapd->iconf->ieee80211ah)
+		return -1;
+
 	if (pkex->freq == 2437)
 		pkex->freq = 5745;
 	else if (pkex->freq == 5745)

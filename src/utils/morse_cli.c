@@ -1,8 +1,5 @@
 /*
  * Copyright 2022 Morse Micro
- *
- * This software may be distributed under the terms of the BSD license.
- * See README for more details.
  */
 
 #include "morse.h"
@@ -236,8 +233,11 @@ int morse_set_mesh_dynamic_peering(const char *ifname, bool enabled, u8 rssi_mar
 	int ret;
 	const char *operation = enabled ? "enable" : "disable";
 
-	ret = morse_cli(ifname, "dynamic_peering %s -r %u -t %u", operation, rssi_margin,
-		blacklist_timeout);
+	if (enabled)
+		ret = morse_cli(ifname, "dynamic_peering %s -r %u -t %u", operation, rssi_margin,
+			blacklist_timeout);
+	else
+		ret = morse_cli(ifname, "dynamic_peering %s", operation);
 	if (ret != 0)
 		wpa_printf(MSG_WARNING,
 			"%s: Failed to execute morse_cli dynamic_peering command on ifname %s",

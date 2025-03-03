@@ -1004,13 +1004,22 @@ int hostapd_parse_csa_settings(const char *pos,
 			       struct csa_settings *settings)
 {
 	char *end;
+	long chan_switch_count;
 
 	os_memset(settings, 0, sizeof(*settings));
-	settings->cs_count = strtol(pos, &end, 10);
+	chan_switch_count = strtol(pos, &end, 10);
 	if (pos == end) {
 		wpa_printf(MSG_ERROR, "chanswitch: invalid cs_count provided");
 		return -1;
 	}
+
+	if (chan_switch_count > UINT8_MAX) {
+		wpa_printf(MSG_ERROR, "chanswitch: invalid cs_count:%ld provided. Max=%u\n",
+			   chan_switch_count, UINT8_MAX);
+		return -1;
+	}
+
+	settings->cs_count = chan_switch_count;
 
 	settings->freq_params.freq = atoi(end);
 	if (settings->freq_params.freq == 0) {

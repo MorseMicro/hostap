@@ -3,7 +3,6 @@
  * Copyright (c) 2017, Qualcomm Atheros, Inc.
  * Copyright (c) 2018-2020, The Linux Foundation
  * Copyright (c) 2021-2022, Qualcomm Innovation Center, Inc.
- * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -2841,6 +2840,12 @@ static int wpas_dpp_allow_ir(struct wpa_supplicant *wpa_s, unsigned int freq)
 static int wpas_dpp_pkex_next_channel(struct wpa_supplicant *wpa_s,
 				      struct dpp_pkex *pkex)
 {
+#if defined(CONFIG_IEEE80211AH)
+	/* Following logic is not S1G compatible. Attempting PKEX on non-adjacent S1G channels
+	 * results in guaranteed failure.
+	 */
+	return -1;
+#endif
 	if (pkex->freq == 2437)
 		pkex->freq = 5745;
 	else if (pkex->freq == 5745)
@@ -5114,10 +5119,16 @@ static int * wpas_dpp_presence_ann_channels(struct wpa_supplicant *wpa_s,
 
 			if (chan->flag & (HOSTAPD_CHAN_DISABLED | HOSTAPD_CHAN_RADAR))
 				continue;
+#if defined(CONFIG_IEEE80211AH)
+			/* Adding channels 44 and 149 at end of scan list is not required
+			 * for HaLow
+			 */
+#else
 			if (chan->freq == 5220)
 				chan44 = 1;
 			if (chan->freq == 5745)
 				chan149 = 1;
+#endif
 
 			/* Morse - All 5GHz channels that are mapped to 1 MHz and 2 MHz.
 			 * Channels that aren't relevant to a regulatory domain will be
@@ -5574,9 +5585,10 @@ static void wpas_dpp_pb_next(void *eloop_ctx, void *timeout_ctx)
 	if (!wpa_s->dpp_pb_freqs)
 		return;
 
-	os_get_reltime(&now);
-	offchannel_send_action_done(wpa_s);
+	if (!wpa_s->dpp_pb_discovery_done)
+		offchannel_send_action_done(wpa_s);
 
+	os_get_reltime(&now);
 	if (os_reltime_expired(&now, &wpa_s->dpp_pb_time, 100)) {
 		wpa_printf(MSG_DEBUG, "DPP: Push button wait time expired");
 		wpas_dpp_push_button_stop(wpa_s);

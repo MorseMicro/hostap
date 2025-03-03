@@ -3346,7 +3346,8 @@ void sme_event_unprot_disconnect(struct wpa_supplicant *wpa_s, const u8 *sa,
 	if (os_memcmp(sa, wpa_s->bssid, ETH_ALEN) != 0)
 		return;
 	if (reason_code != WLAN_REASON_CLASS2_FRAME_FROM_NONAUTH_STA &&
-	    reason_code != WLAN_REASON_CLASS3_FRAME_FROM_NONASSOC_STA)
+	    reason_code != WLAN_REASON_CLASS3_FRAME_FROM_NONASSOC_STA &&
+	    reason_code != WLAN_REASON_4WAY_HANDSHAKE_TIMEOUT)
 		return;
 	if (wpa_s->sme.sa_query_count > 0)
 		return;
