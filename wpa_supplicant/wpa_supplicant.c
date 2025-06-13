@@ -2934,6 +2934,11 @@ void morse_ibss_mesh_setup_freq(struct wpa_supplicant *wpa_s,
 	conf->op_country[1] = ssid->country[1];
 	conf->op_country[2] = ' ';
 
+#ifdef CONFIG_MESH
+	if (ssid->mode == WPAS_MODE_MESH)
+		ssid->mesh_fwding = wpa_s->conf->mesh_fwding;
+#endif
+
 	if (ssid->disable_s1g_sgi)
 		conf->s1g_capab &= ~S1G_CAP0_SGI_ALL;
 

@@ -58,7 +58,11 @@ export BINDIR ?= /usr/local/sbin
 PKG_CONFIG ?= pkg-config
 
 EXTRA_CFLAGS += -Wextra -Werror
-EXTRA_CFLAGS += -Wno-stringop-truncation -Wmaybe-uninitialized -Wno-missing-attributes
+ifdef CONFIG_ANDROID
+    EXTRA_CFLAGS += -Wno-string-concatenation -Wuninitialized
+else
+    EXTRA_CFLAGS += -Wno-stringop-truncation -Wmaybe-uninitialized -Wno-missing-attributes
+endif
 EXTRA_CFLAGS += -Wno-unused-parameter
 CFLAGS += $(EXTRA_CFLAGS)
 
@@ -76,7 +80,7 @@ endif
 endif
 
 # This line used by packaging scripts - do not change
-MORSE_VERSION ?=
+MORSE_VERSION ?= rel_1_15_3_2025_Apr_16
 ifdef MORSE_VERSION
 CFLAGS += -DMORSE_VERSION_STR=\"$(MORSE_VERSION)\"
 endif
@@ -187,7 +191,7 @@ endif
 OBJS += ../src/utils/$(CONFIG_ELOOP).o
 OBJS_c += ../src/utils/$(CONFIG_ELOOP).o
 
-ifndef CONFIG_OSX
+ifneq ($(or $(CONFIG_OSX),$(CONFIG_ANDROID)),y)
 ifeq ($(CONFIG_ELOOP), eloop)
 # Using glibc < 2.17 requires -lrt for clock_gettime()
 # OS X has an alternate implementation
