@@ -224,9 +224,11 @@ struct dpp_pkex {
 	struct crypto_ec_key *peer_bootstrap_key;
 	struct wpabuf *exchange_req;
 	struct wpabuf *exchange_resp;
+	struct wpabuf *commit_reveal_req;
 	unsigned int t; /* number of failures on code use */
 	unsigned int exch_req_wait_time;
 	unsigned int exch_req_tries;
+	unsigned int commit_reveal_tries;
 	unsigned int freq;
 	u8 peer_version;
 	struct wpabuf *enc_key;
@@ -338,6 +340,7 @@ struct dpp_authentication {
 	int waiting_auth_conf;
 	int auth_req_ack;
 	unsigned int auth_resp_tries;
+	unsigned int conf_req_tries;
 	u8 allowed_roles;
 	int configurator;
 	int remove_on_tx_status;

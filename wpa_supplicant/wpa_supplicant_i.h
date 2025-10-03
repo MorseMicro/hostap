@@ -675,6 +675,14 @@ struct ml_sta_link_info {
 	u16 status;
 };
 
+enum dpp_pb_discovery_round {
+	DPP_PB_DISCOVERY_NOT_STARTED = 0,
+	DPP_PB_DISCOVERY_ROUND_1,
+	DPP_PB_DISCOVERY_ROUND_2,
+	DPP_PB_DISCOVERY_ROUND_3A,
+	DPP_PB_DISCOVERY_ROUND_3B,
+	DPP_PB_DISCOVERY_ROUND_3C,
+};
 
 /**
  * struct wpa_supplicant - Internal data for wpa_supplicant interface
@@ -1542,8 +1550,8 @@ struct wpa_supplicant {
 	struct dpp_bootstrap_info *dpp_pb_bi;
 	unsigned int dpp_pb_resp_freq;
 	u8 dpp_pb_init_hash[SHA256_MAC_LEN];
-	int dpp_pb_stop_iter;
 	bool dpp_pb_discovery_done;
+	enum dpp_pb_discovery_round dpp_pb_discovery_round;
 	u8 dpp_pb_c_nonce[DPP_MAX_NONCE_LEN];
 	size_t dpp_pb_c_nonce_len;
 	bool dpp_pb_result_indicated;

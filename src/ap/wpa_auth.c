@@ -4992,13 +4992,6 @@ SM_STATE(WPA_PTK, PTKINITNEGOTIATING)
 		pos += conf->ssid_len;
 	}
 
-	if (sm->ssid_protection) {
-		*pos++ = WLAN_EID_SSID;
-		*pos++ = conf->ssid_len;
-		os_memcpy(pos, conf->ssid, conf->ssid_len);
-		pos += conf->ssid_len;
-	}
-
 #ifdef CONFIG_TESTING_OPTIONS
 	if (conf->eapol_m3_elements) {
 		os_memcpy(pos, wpabuf_head(conf->eapol_m3_elements),
