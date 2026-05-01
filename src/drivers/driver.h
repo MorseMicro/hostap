@@ -1,6 +1,7 @@
 /*
  * Driver interface definition
  * Copyright (c) 2003-2017, Jouni Malinen <j@w1.fi>
+ * Copyright 2023 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -734,6 +735,12 @@ struct wpa_driver_scan_params {
 	 */
 	s8 link_id;
 
+	/**
+	 * min_scan_timeout - The minimum time to wait before cancelling a scan (seconds). 0 to use
+	 * defaults.
+	 */
+	u32 min_scan_timeout;
+
 	/*
 	 * NOTE: Whenever adding new parameters here, please make sure
 	 * wpa_scan_clone_params() and wpa_scan_free_params() get updated with
@@ -814,6 +821,41 @@ enum wps_mode {
 };
 
 /**
+ * struct hostapd_s1g_freq_params - S1G Channel parameters
+ */
+struct hostapd_s1g_freq_params {
+	/**
+	 * s1g_global_op_class - Global operating class
+	 */
+	int s1g_global_op_class;
+
+	/**
+	 * s1g_prim_bw - Primary channel bandwidth
+	 */
+	int s1g_prim_bw;
+
+	/**
+	 * s1g_prim_channel_index_1MHz - Index of primary 1MHz channel
+	 */
+	int s1g_prim_channel_index_1MHz;
+
+	/**
+	 * s1g_oper_freq - New S1g Operating frequency
+	 */
+	int s1g_oper_freq;
+
+	/**
+	 * s1g_oper_bw - New S1g Operating channel bandwidth
+	 */
+	int s1g_oper_bw;
+
+	/**
+	 * s1g_prim_ch_global_op_class - Global operating class for primary chan
+	 */
+	int s1g_prim_ch_global_op_class;
+};
+
+/**
  * struct hostapd_freq_params - Channel parameters
  */
 struct hostapd_freq_params {
@@ -880,6 +922,13 @@ struct hostapd_freq_params {
 	 * for IEEE 802.11ay EDMG configuration.
 	 */
 	struct ieee80211_edmg_config edmg;
+
+#ifdef CONFIG_IEEE80211AH
+	/**
+	 * prim_bandwidth - S1G Primary Channel bandwidth in MHz (1 or 2)
+	 */
+	int prim_bandwidth;
+#endif /* CONFIG_IEEE80211AH */
 
 	/**
 	 * radar_background - Whether radar/CAC background is requested
@@ -1888,6 +1937,9 @@ struct wpa_driver_mesh_bss_params {
 #define WPA_DRIVER_MESH_CONF_FLAG_HT_OP_MODE		0x00000008
 #define WPA_DRIVER_MESH_CONF_FLAG_RSSI_THRESHOLD	0x00000010
 #define WPA_DRIVER_MESH_CONF_FLAG_FORWARDING		0x00000020
+#define WPA_DRIVER_MESH_CONF_FLAG_ROOTMODE		0x00000040
+#define WPA_DRIVER_MESH_CONF_FLAG_GATE_ANNOUNCEMENTS	0x00000080
+#define WPA_DRIVER_MESH_CONF_FLAG_NOLEARN		0x00000100
 	/*
 	 * TODO: Other mesh configuration parameters would go here.
 	 * See NL80211_MESHCONF_* for all the mesh config parameters.
@@ -1898,7 +1950,10 @@ struct wpa_driver_mesh_bss_params {
 	int max_peer_links;
 	int rssi_threshold;
 	int forwarding;
+	int nolearn;
 	u16 ht_opmode;
+	int dot11MeshHWMPRootMode;
+	int dot11MeshGateAnnouncements;
 };
 
 struct wpa_driver_mesh_join_params {
@@ -2774,6 +2829,9 @@ struct csa_settings {
 	u8 block_tx;
 
 	struct hostapd_freq_params freq_params;
+#ifdef CONFIG_IEEE80211AH
+	struct hostapd_s1g_freq_params s1g_freq_params;
+#endif /* CONFIG_IEEE80211AH */
 	struct beacon_data beacon_csa;
 	struct beacon_data beacon_after;
 
@@ -6986,6 +7044,15 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
  */
 void wpa_supplicant_event_global(void *ctx, enum wpa_event_type event,
 				 union wpa_event_data *data);
+
+#if defined(CONFIG_MESH) && defined(CONFIG_IEEE80211AH)
+/**
+ * wpa_supplicant_mesh_peer_event - Handles UMAC driver's vendor event.
+ * @ctx:  supplicant context
+ * @peer_addr: mesh peer address
+ */
+void wpa_supplicant_mesh_peer_event(void *ctx, u8 *peer_addr);
+#endif
 
 /*
  * The following inline functions are provided for convenience to simplify

@@ -16,7 +16,7 @@
 #include "notify.h"
 #include "p2p_supplicant.h"
 #include "nan_usd.h"
-
+#include "scan.h"
 
 static const char *
 tx_status_result_txt(enum offchannel_send_action_result result)
@@ -374,6 +374,9 @@ int wpas_nan_usd_publish(struct wpa_supplicant *wpa_s, const char *service_name,
 		addr = wpa_s->own_addr;
 	}
 
+	/* Cancel Scan to speed NAN up */
+	wpa_supplicant_cancel_sched_scan(wpa_s);
+
 	publish_id = nan_de_publish(wpa_s->nan_de, service_name, srv_proto_type,
 				    ssi, elems, params, p2p);
 	if (publish_id >= 1 &&
@@ -435,6 +438,9 @@ int wpas_nan_usd_subscribe(struct wpa_supplicant *wpa_s,
 	} else {
 		addr = wpa_s->own_addr;
 	}
+
+	/* Cancel Scan to speed NAN up */
+	wpa_supplicant_cancel_sched_scan(wpa_s);
 
 	subscribe_id = nan_de_subscribe(wpa_s->nan_de, service_name,
 					srv_proto_type, ssi, elems, params,
@@ -533,3 +539,4 @@ int * wpas_nan_usd_all_freqs(struct wpa_supplicant *wpa_s)
 
 	return freqs;
 }
+

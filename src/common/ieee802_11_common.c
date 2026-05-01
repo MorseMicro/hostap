@@ -1,6 +1,7 @@
 /*
  * IEEE 802.11 Common routines
  * Copyright (c) 2002-2019, Jouni Malinen <j@w1.fi>
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -595,6 +596,10 @@ static ParseRes __ieee802_11_parse_elems(const u8 *start, size_t len,
 			elems->ext_capab = pos;
 			elems->ext_capab_len = elen;
 			break;
+		case WLAN_EID_QOS_TRAFFIC_CAPABILITY:
+			elems->qos_traffic_cap = pos;
+			elems->qos_traffic_cap_len = elen;
+			break;
 		case WLAN_EID_BSS_MAX_IDLE_PERIOD:
 			if (elen < 3)
 				break;
@@ -664,6 +669,16 @@ static ParseRes __ieee802_11_parse_elems(const u8 *start, size_t len,
 			if (elen < 15)
 				break;
 			elems->s1g_capab = pos;
+			break;
+		case WLAN_EID_AID_RESPONSE:
+			if (elen < 5)
+				break;
+			elems->aid = pos;
+			break;
+		case WLAN_EID_S1G_MAX_AWAY_DURATION:
+			if (elen < 2)
+				break;
+			elems->max_away_duration = pos;
 			break;
 		case WLAN_EID_FRAGMENT:
 			wpa_printf(MSG_MSGDUMP,
@@ -854,6 +869,9 @@ void ieee802_11_elems_clear_ids(struct ieee802_11_elems *elems,
 		case WLAN_EID_RRM_ENABLED_CAPABILITIES:
 			elems->rrm_enabled = NULL;
 			elems->rrm_enabled_len = 0;
+			break;
+		case WLAN_EID_S1G_MAX_AWAY_DURATION:
+			elems->max_away_duration = 0;
 			break;
 		case WLAN_EID_CAG_NUMBER:
 			elems->cag_number = NULL;
@@ -1410,6 +1428,7 @@ ieee80211_freq_to_channel_ext(unsigned int freq, int sec_channel,
 			      enum oper_chan_width chanwidth,
 			      u8 *op_class, u8 *channel)
 {
+#ifndef MM_IOT
 	u8 vht_opclass;
 
 	/* TODO: more operating classes */
@@ -1631,6 +1650,7 @@ ieee80211_freq_to_channel_ext(unsigned int freq, int sec_channel,
 		return HOSTAPD_MODE_IEEE80211AD;
 	}
 
+#endif /* MM_IOT */
 	return NUM_HOSTAPD_MODES;
 }
 
@@ -1638,6 +1658,7 @@ ieee80211_freq_to_channel_ext(unsigned int freq, int sec_channel,
 int ieee80211_chaninfo_to_channel(unsigned int freq, enum chan_width chanwidth,
 				  int sec_channel, u8 *op_class, u8 *channel)
 {
+#ifndef MM_IOT
 	int cw = CHAN_WIDTH_UNKNOWN;
 
 	switch (chanwidth) {
@@ -1681,10 +1702,12 @@ int ieee80211_chaninfo_to_channel(unsigned int freq, enum chan_width chanwidth,
 		return -1;
 	}
 
+#endif /* MM_IOT */
 	return 0;
 }
 
 
+#ifndef MM_IOT
 static const char *const us_op_class_cc[] = {
 	"US", "CA", NULL
 };
@@ -2037,6 +2060,7 @@ int ieee80211_chan_to_freq(const char *country, u8 op_class, u8 chan)
 
 	return ieee80211_chan_to_freq_global(op_class, chan);
 }
+#endif /* MM_IOT */
 
 
 int ieee80211_is_dfs(int freq, const struct hostapd_hw_modes *modes,
@@ -2411,6 +2435,7 @@ struct wpabuf * mb_ies_by_info(struct mb_ies_info *info)
 }
 
 
+#ifndef MM_IOT
 const struct oper_class_map global_op_class[] = {
 	{ HOSTAPD_MODE_IEEE80211G, 81, 1, 13, 1, BW20, P2P_SUPP },
 	{ HOSTAPD_MODE_IEEE80211G, 82, 14, 14, 1, BW20, NO_P2P_SUPP },
@@ -2513,6 +2538,15 @@ enum phy_type ieee80211_get_phy_type(int freq, int ht, int vht)
 
 
 size_t global_op_class_size = ARRAY_SIZE(global_op_class);
+
+#else /* MM_IOT */
+
+enum phy_type ieee80211_get_phy_type(int freq, int ht, int vht)
+{
+	return PHY_TYPE_S1G;
+}
+
+#endif /* MM_IOT */
 
 
 /**
@@ -2741,6 +2775,7 @@ size_t add_multi_ap_ie(u8 *buf, size_t len,
 }
 
 
+#ifndef MM_IOT
 static const struct country_op_class us_op_class[] = {
 	{ 1, 115 },
 	{ 2, 118 },
@@ -2975,6 +3010,22 @@ bool is_6ghz_psc_frequency(int freq)
 	return false;
 }
 
+#else /* MM_IOT */
+
+bool is_6ghz_freq(int freq)
+{
+	(void)freq;
+	return false;
+}
+
+bool is_6ghz_psc_frequency(int freq)
+{
+	(void)freq;
+	return false;
+}
+
+#endif /* MM_IOT */
+
 
 /**
  * get_6ghz_sec_channel - Get the relative position of the secondary channel
@@ -3158,6 +3209,7 @@ bool ieee802_11_rsnx_capab(const u8 *rsnxe, unsigned int capab)
 }
 
 
+#ifndef MM_IOT
 void hostapd_encode_edmg_chan(int edmg_enable, u8 edmg_channel,
 			      int primary_channel,
 			      struct ieee80211_edmg_config *edmg)
@@ -3355,6 +3407,7 @@ enum oper_chan_width op_class_to_ch_width(u8 op_class)
 		return CONF_OPER_CHWIDTH_USE_HT;
 	}
 }
+#endif /* MM_IOT */
 
 
 /**

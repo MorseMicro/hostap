@@ -3204,7 +3204,11 @@ out_parse_done:
 	hs20_notify_parse_done(wpa_s);
 #endif /* CONFIG_HS20 */
 out:
+#ifdef CONFIG_AIDL
+	wpas_notify_anqp_query_done(wpa_s, dst, anqp_result, bss ? bss->anqp : NULL);
+#else
 	wpas_notify_anqp_query_done(wpa_s, dst, anqp_result);
+#endif /* CONFIG_AIDL */
 }
 
 

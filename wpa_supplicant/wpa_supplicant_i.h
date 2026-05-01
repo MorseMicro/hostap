@@ -1,6 +1,7 @@
 /*
  * wpa_supplicant - Internal definitions
  * Copyright (c) 2003-2024, Jouni Malinen <j@w1.fi>
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -21,6 +22,9 @@
 #include "config_ssid.h"
 #include "wmm_ac.h"
 #include "pasn/pasn_common.h"
+#ifdef CONFIG_AIDL
+#include "config.h"
+#endif /* CONFIG_AIDL */
 
 extern const char *const wpa_supplicant_version;
 extern const char *const wpa_supplicant_license;
@@ -50,7 +54,11 @@ struct wpa_cred;
 struct ctrl_iface_priv;
 struct ctrl_iface_global_priv;
 struct wpas_dbus_priv;
+#ifndef CONFIG_AIDL
 struct wpas_binder_priv;
+#else
+struct wpas_aidl_priv;
+#endif /* CONFIG_AIDL */
 
 /**
  * struct wpa_interface - Parameters for wpa_supplicant_add_iface()
@@ -283,7 +291,11 @@ struct wpa_global {
 	struct wpa_params params;
 	struct ctrl_iface_global_priv *ctrl_iface;
 	struct wpas_dbus_priv *dbus;
+#ifndef CONFIG_AIDL
 	struct wpas_binder_priv *binder;
+#else
+	struct wpas_aidl_priv *aidl;
+#endif /* CONFIG_AIDL */
 	void **drv_priv;
 	size_t drv_count;
 	struct os_time suspend_time;
@@ -310,6 +322,12 @@ struct wpa_global {
 	unsigned int p2p_24ghz_social_channels:1;
 	unsigned int pending_p2ps_group:1;
 	unsigned int pending_group_iface_for_p2ps:1;
+#ifdef CONFIG_AIDL
+	unsigned int p2p_go_found_external_scan:1;
+#endif /* CONFIG_AIDL */
+#ifdef CONFIG_MORSE_KEEP_ALIVE_OFFLOAD
+	unsigned int vendor_keep_alive_offload:1;
+#endif
 	unsigned int pending_p2ps_group_freq;
 
 #ifdef CONFIG_WIFI_DISPLAY
@@ -319,6 +337,9 @@ struct wpa_global {
 #endif /* CONFIG_WIFI_DISPLAY */
 
 	struct psk_list_entry *add_psk; /* From group formation */
+#ifdef CONFIG_MORSE_STANDBY_MODE
+	char *standby_session_dir;
+#endif
 };
 
 
@@ -661,6 +682,20 @@ struct active_scs_elem {
 	enum scs_response_status status;
 };
 
+struct dscp_policy_data {
+	u8 policy_id;
+	u8 req_type;
+	u8 dscp;
+	bool dscp_info;
+	const u8 *frame_classifier;
+	u8 frame_classifier_len;
+	struct type4_params type4_param;
+	const u8 *domain_name;
+	u8 domain_name_len;
+	u16 start_port;
+	u16 end_port;
+	bool port_range_info;
+};
 
 struct ml_sta_link_info {
 	u8 link_id;
@@ -668,6 +703,14 @@ struct ml_sta_link_info {
 	u16 status;
 };
 
+enum dpp_pb_discovery_round {
+	DPP_PB_DISCOVERY_NOT_STARTED = 0,
+	DPP_PB_DISCOVERY_ROUND_1,
+	DPP_PB_DISCOVERY_ROUND_2,
+	DPP_PB_DISCOVERY_ROUND_3A,
+	DPP_PB_DISCOVERY_ROUND_3B,
+	DPP_PB_DISCOVERY_ROUND_3C,
+};
 
 /**
  * struct wpa_supplicant - Internal data for wpa_supplicant interface
@@ -706,6 +749,9 @@ struct wpa_supplicant {
 #ifdef CONFIG_CTRL_IFACE_BINDER
 	const void *binder_object_key;
 #endif /* CONFIG_CTRL_IFACE_BINDER */
+#ifdef CONFIG_CTRL_IFACE_AIDL
+	const void *aidl_object_key;
+#endif /* CONFIG_CTRL_IFACE_AIDL */
 	char bridge_ifname[16];
 
 	char *confname;
@@ -901,6 +947,7 @@ struct wpa_supplicant {
 	 * pending vendor scan request.
 	 */
 	u64 curr_scan_cookie;
+	u16 next_scan_dwell_duration;
 #define MAX_SCAN_ID 16
 	int scan_id[MAX_SCAN_ID];
 	unsigned int scan_id_count;
@@ -975,7 +1022,15 @@ struct wpa_supplicant {
 	unsigned int connection_vht:1;
 	unsigned int connection_he:1;
 	unsigned int connection_eht:1;
+#ifdef CONFIG_AIDL
+	unsigned int connection_max_nss_rx:4;
+	unsigned int connection_max_nss_tx:4;
+	unsigned int connection_channel_bandwidth:5;
+#endif /* CONFIG_AIDL */
 	unsigned int disable_mbo_oce:1;
+#ifdef CONFIG_AIDL
+	unsigned int connection_11b_only:1;
+#endif /* CONFIG_AIDL */
 
 	struct os_reltime last_mac_addr_change;
 	enum wpas_mac_addr_style last_mac_addr_style;
@@ -1325,7 +1380,15 @@ struct wpa_supplicant {
 	u8 coloc_intf_timeout;
 #ifdef CONFIG_MBO
 	unsigned int wnm_mbo_trans_reason_present:1;
+#ifdef CONFIG_AIDL
+	unsigned int wnm_mbo_cell_pref_present:1;
+	unsigned int wnm_mbo_assoc_retry_delay_present:1;
+#endif /* CONFIG_AIDL */
 	u8 wnm_mbo_transition_reason;
+#ifdef CONFIG_AIDL
+	u8 wnm_mbo_cell_preference;
+	u16 wnm_mbo_assoc_retry_delay_sec;
+#endif /* CONFIG_AIDL */
 #endif /* CONFIG_MBO */
 #endif /* CONFIG_WNM */
 
@@ -1534,8 +1597,8 @@ struct wpa_supplicant {
 	struct dpp_bootstrap_info *dpp_pb_bi;
 	unsigned int dpp_pb_resp_freq;
 	u8 dpp_pb_init_hash[SHA256_MAC_LEN];
-	int dpp_pb_stop_iter;
 	bool dpp_pb_discovery_done;
+	enum dpp_pb_discovery_round dpp_pb_discovery_round;
 	u8 dpp_pb_c_nonce[DPP_MAX_NONCE_LEN];
 	size_t dpp_pb_c_nonce_len;
 	bool dpp_pb_result_indicated;
@@ -1602,6 +1665,10 @@ struct wpa_supplicant {
 	bool support_6ghz;
 
 	struct wpa_signal_info last_signal_info;
+
+#ifdef CONFIG_IEEE80211AH
+	u8 s1g_rrm_op_class;
+#endif /* CONFIG_IEEE80211AH */
 
 	struct wpa_ssid *ml_connect_probe_ssid;
 	struct wpa_bss *ml_connect_probe_bss;
@@ -1821,6 +1888,11 @@ enum chan_allowed {
 
 enum chan_allowed verify_channel(struct hostapd_hw_modes *mode, u8 op_class,
 				 u8 channel, u8 bw);
+#ifdef CONFIG_IEEE80211AH
+size_t wpas_supp_s1g_op_class_ie(struct wpa_supplicant *wpa_s,
+				struct wpa_ssid *ssid,
+				struct wpa_bss *bss, u8 *pos, size_t len);
+#endif
 size_t wpas_supp_op_class_ie(struct wpa_supplicant *wpa_s,
 			     struct wpa_ssid *ssid,
 			     struct wpa_bss *bss, u8 *pos, size_t len);
@@ -1847,9 +1919,24 @@ int wpa_supplicant_ctrl_iface_ctrl_rsp_handle(struct wpa_supplicant *wpa_s,
 					      const char *field,
 					      const char *value);
 
+#ifdef CONFIG_AIDL
+int wpa_supplicant_ctrl_rsp_handle(struct wpa_supplicant *wpa_s,
+				   struct wpa_ssid *ssid,
+				   enum wpa_ctrl_req_type rtype,
+				   const char *value, int len);
+#endif /* CONFIG_AIDL */
+
 void ibss_mesh_setup_freq(struct wpa_supplicant *wpa_s,
 			  const struct wpa_ssid *ssid,
 			  struct hostapd_freq_params *freq);
+
+#ifdef CONFIG_IEEE80211AH
+/* Set frequency parameters for IBSS / MESH */
+void morse_ibss_mesh_setup_freq(struct wpa_supplicant *wpa_s,
+				struct wpa_ssid *ssid,
+				struct hostapd_freq_params *freq,
+				struct hostapd_config *conf);
+#endif
 
 /* events.c */
 void wpa_supplicant_mark_disassoc(struct wpa_supplicant *wpa_s);
@@ -1905,6 +1992,9 @@ static inline int wpas_mode_to_ieee80211_mode(enum wpas_mode mode)
 
 int wpas_network_disabled(struct wpa_supplicant *wpa_s, struct wpa_ssid *ssid);
 int wpas_get_ssid_pmf(struct wpa_supplicant *wpa_s, struct wpa_ssid *ssid);
+#ifdef CONFIG_IEEE80211AH
+int wpas_get_ssid_cac(struct wpa_supplicant *wpa_s, struct wpa_ssid *ssid);
+#endif
 int pmf_in_use(struct wpa_supplicant *wpa_s, const u8 *addr);
 void wpa_s_setup_sae_pt(struct wpa_config *conf, struct wpa_ssid *ssid,
 			bool force);

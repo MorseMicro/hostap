@@ -10,6 +10,9 @@
 #define NOTIFY_H
 
 #include "p2p/p2p.h"
+#ifdef CONFIG_AIDL
+#include "bss.h"
+#endif /* CONFIG_AIDL */
 
 struct wps_credential;
 struct wps_event_m2d;
@@ -30,6 +33,7 @@ void wpas_notify_state_changed(struct wpa_supplicant *wpa_s,
 void wpas_notify_disconnect_reason(struct wpa_supplicant *wpa_s);
 void wpas_notify_auth_status_code(struct wpa_supplicant *wpa_s);
 void wpas_notify_assoc_status_code(struct wpa_supplicant *wpa_s);
+void wpas_notify_auth_timeout(struct wpa_supplicant *wpa_s);
 void wpas_notify_roam_time(struct wpa_supplicant *wpa_s);
 void wpas_notify_roam_complete(struct wpa_supplicant *wpa_s);
 void wpas_notify_scan_in_progress_6ghz(struct wpa_supplicant *wpa_s);
@@ -171,8 +175,14 @@ void wpas_notify_interworking_ap_added(struct wpa_supplicant *wpa_s,
 				       const char *type, int bh, int bss_load,
 				       int conn_capab);
 void wpas_notify_interworking_select_done(struct wpa_supplicant *wpa_s);
+#ifdef CONFIG_AIDL
+void wpas_notify_anqp_query_done(struct wpa_supplicant *wpa_s,
+				 const u8 *dst, const char *result,
+				 const struct wpa_bss_anqp *anqp);
+#else
 void wpas_notify_anqp_query_done(struct wpa_supplicant *wpa_s,
 				 const u8 *dst, const char *result);
+#endif /* CONFIG_AIDL */
 void wpas_notify_pmk_cache_added(struct wpa_supplicant *wpa_s,
 				 struct rsn_pmksa_cache_entry *entry);
 void wpas_notify_signal_change(struct wpa_supplicant *wpa_s);

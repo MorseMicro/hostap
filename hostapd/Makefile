@@ -1,4 +1,8 @@
-ALL=hostapd hostapd_cli
+#
+# Copyright 2021 Morse Micro
+#
+
+ALL=hostapd_s1g hostapd_cli_s1g
 CONFIG_FILE = .config
 
 include ../src/build.rules
@@ -21,7 +25,11 @@ LIBS_s := $(LIBS)
 endif
 endif
 
+EXTRA_CFLAGS += -Wextra -Werror
+EXTRA_CFLAGS += -Wno-stringop-truncation -Wmaybe-uninitialized -Wno-missing-attributes
+EXTRA_CFLAGS += -Wno-unused-parameter
 CFLAGS += $(EXTRA_CFLAGS)
+
 CFLAGS += -I$(abspath ../src)
 CFLAGS += -I$(abspath ../src/utils)
 
@@ -35,6 +43,12 @@ ifneq ($(GITVER),)
 CFLAGS += -DGIT_VERSION_STR_POSTFIX=\"-$(GITVER)\"
 endif
 endif
+endif
+
+# This line used by packaging scripts - do not change
+MORSE_VERSION ?= rel_1_17_8_2026_Mar_24
+ifdef MORSE_VERSION
+CFLAGS += -DMORSE_VERSION_STR=\"$(MORSE_VERSION)\"
 endif
 
 ifdef CONFIG_TESTING_OPTIONS
@@ -347,6 +361,12 @@ ifdef CONFIG_IEEE80211BE
 CONFIG_IEEE80211AX=y
 CFLAGS += -DCONFIG_IEEE80211BE
 OBJS += ../src/ap/ieee802_11_eht.o
+endif
+
+ifdef CONFIG_IEEE80211AH
+CFLAGS += -DCONFIG_IEEE80211AH
+OBJS += ../src/utils/morse.o
+OBJS += ../src/utils/morse_cli.o
 endif
 
 ifdef CONFIG_IEEE80211AX
@@ -1306,8 +1326,8 @@ install: $(addprefix $(DESTDIR)$(BINDIR)/,$(ALL))
 _OBJS_VAR := OBJS
 include ../src/objs.mk
 
-hostapd: $(OBJS)
-	$(Q)$(CC) $(LDFLAGS) -o hostapd $(OBJS) $(LIBS)
+hostapd_s1g: $(OBJS)
+	$(Q)$(CC) $(LDFLAGS) -o hostapd_s1g $(OBJS) $(LIBS)
 	@$(E) "  LD " $@
 
 ifdef CONFIG_WPA_TRACE
@@ -1317,8 +1337,8 @@ endif
 _OBJS_VAR := OBJS_c
 include ../src/objs.mk
 
-hostapd_cli: $(OBJS_c)
-	$(Q)$(CC) $(LDFLAGS) -o hostapd_cli $(OBJS_c) $(LIBS_c)
+hostapd_cli_s1g: $(OBJS_c)
+	$(Q)$(CC) $(LDFLAGS) -o hostapd_cli_s1g $(OBJS_c) $(LIBS_c)
 	@$(E) "  LD " $@
 
 NOBJS = nt_password_hash.o ../src/crypto/ms_funcs.o $(SHA1OBJS)

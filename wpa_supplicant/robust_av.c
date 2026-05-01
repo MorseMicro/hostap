@@ -1086,22 +1086,6 @@ static int write_ipv6_info(char *pos, int total_len,
 }
 
 
-struct dscp_policy_data {
-	u8 policy_id;
-	u8 req_type;
-	u8 dscp;
-	bool dscp_info;
-	const u8 *frame_classifier;
-	u8 frame_classifier_len;
-	struct type4_params type4_param;
-	const u8 *domain_name;
-	u8 domain_name_len;
-	u16 start_port;
-	u16 end_port;
-	bool port_range_info;
-};
-
-
 static int set_frame_classifier_type4_ipv4(struct dscp_policy_data *policy)
 {
 	u8 classifier_mask;
