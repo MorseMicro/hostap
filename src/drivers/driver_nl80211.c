@@ -5,6 +5,7 @@
  * Copyright (c) 2005-2006, Devicescape Software, Inc.
  * Copyright (c) 2007, Johannes Berg <johannes@sipsolutions.net>
  * Copyright (c) 2009-2010, Atheros Communications
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -21,6 +22,7 @@
 #include <linux/rtnetlink.h>
 #include <netpacket/packet.h>
 #include <linux/errqueue.h>
+#include <sys/stat.h>
 
 #include "common.h"
 #include "eloop.h"
@@ -32,6 +34,7 @@
 #include "common/wpa_common.h"
 #include "common/nan.h"
 #include "common/nan_de.h"
+#include "common/morse/morse_commands.h"
 #include "crypto/sha256.h"
 #include "crypto/sha384.h"
 #include "netlink.h"
@@ -41,7 +44,14 @@
 #include "radiotap_iter.h"
 #include "rfkill.h"
 #include "driver_nl80211.h"
+#include "morse.h"
 
+#define MORSE_VENDOR_CMD_TO_MORSE 0x00
+#define RAW_CMD_MAX_3BIT_SLOTS          (0b111)
+#define RAW_CMD_MIN_SLOT_DUR_US         (500)
+#define RAW_CMD_MAX_SLOT_DUR_US         (RAW_CMD_MIN_SLOT_DUR_US + (200 * (1 << 11) - 1))
+#define RAW_CMD_MAX_START_TIME_US       (UINT8_MAX * 2 * 1024)
+#define RAW_CMD_MAX_AID                 (2007) /* set by linux */
 
 #ifndef NETLINK_CAP_ACK
 #define NETLINK_CAP_ACK 10
@@ -77,6 +87,125 @@ enum nlmsgerr_attrs {
 
 #endif /* ANDROID */
 
+#ifdef CONFIG_DRIVER_NL80211_MORSE
+static int morse_vendor_reply_handler(struct nl_msg *msg, void *arg)
+{
+	struct wpabuf *reply = arg;
+	struct nlattr *tb[NL80211_ATTR_MAX + 1];
+	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+	int len;
+
+	if (!reply)
+		return NL_SKIP;
+
+	nla_parse(tb, NL80211_ATTR_MAX,
+		    genlmsg_attrdata(gnlh, 0),
+		    genlmsg_attrlen(gnlh, 0),
+		    NULL);
+
+	if (!tb[NL80211_ATTR_VENDOR_DATA]) {
+		wpa_printf(MSG_ERROR, "morse: no VENDOR_DATA in reply");
+		return NL_SKIP;
+	}
+
+	len = nla_len(tb[NL80211_ATTR_VENDOR_DATA]);
+	if ((size_t) len > wpabuf_tailroom(reply)) {
+		wpa_printf(MSG_ERROR,
+			     "morse: reply buffer too small (%zu < %d)",
+			     wpabuf_tailroom(reply), len);
+		return NL_STOP;
+	}
+
+	wpabuf_put_data(reply, nla_data(tb[NL80211_ATTR_VENDOR_DATA]), len);
+
+	return NL_SKIP;
+}
+
+static int morse_send_message(struct wpa_driver_nl80211_data *drv,
+					const void *req, size_t req_len)
+{
+	struct nl_msg *msg = NULL;
+	int ret;
+
+	if (!drv || !req || !req_len)
+		return -EINVAL;
+
+	msg = nlmsg_alloc();
+	if (!msg)
+		return -ENOBUFS;
+
+	if (!genlmsg_put(msg, 0, 0, drv->global->nl80211_id,
+			 0, 0, NL80211_CMD_VENDOR, 0)) {
+		ret = -ENOBUFS;
+		goto fail;
+	}
+
+	if (nla_put_u32(msg, NL80211_ATTR_VENDOR_ID, MORSE_OUI) ||
+	    nla_put_u32(msg, NL80211_ATTR_IFINDEX, drv->ifindex) ||
+	    nla_put_u32(msg, NL80211_ATTR_VENDOR_SUBCMD,
+			MORSE_VENDOR_CMD_TO_MORSE)) {
+		ret = -ENOBUFS;
+		goto fail;
+	}
+
+	if (nla_put(msg, NL80211_ATTR_VENDOR_DATA, req_len, req)) {
+		ret = -ENOBUFS;
+		goto fail;
+	}
+
+	ret = send_and_recv_cmd(drv, msg);
+	msg = NULL;
+
+	return ret;
+
+fail:
+	nlmsg_free(msg);
+	return ret;
+}
+
+static int morse_send_message_with_resp(struct wpa_driver_nl80211_data *drv,
+						    const void *req, size_t req_len,
+						    struct wpabuf *reply)
+{
+	struct nl_msg *msg = NULL;
+	int ret;
+
+	if (!drv || !req || !req_len)
+		return -EINVAL;
+
+	msg = nlmsg_alloc();
+	if (!msg)
+		return -ENOBUFS;
+
+	if (!genlmsg_put(msg, 0, 0, drv->global->nl80211_id,
+			 0, 0, NL80211_CMD_VENDOR, 0)) {
+		ret = -ENOBUFS;
+		goto fail;
+	}
+
+	if (nla_put_u32(msg, NL80211_ATTR_VENDOR_ID, MORSE_OUI) ||
+	    nla_put_u32(msg, NL80211_ATTR_IFINDEX, drv->ifindex) ||
+	    nla_put_u32(msg, NL80211_ATTR_VENDOR_SUBCMD,
+			MORSE_VENDOR_CMD_TO_MORSE)) {
+		ret = -ENOBUFS;
+		goto fail;
+	}
+
+	if (nla_put(msg, NL80211_ATTR_VENDOR_DATA, req_len, req)) {
+		ret = -ENOBUFS;
+		goto fail;
+	}
+
+	ret = send_and_recv_resp(drv, msg, morse_vendor_reply_handler, reply);
+	msg = NULL;
+
+	return ret;
+
+fail:
+	nlmsg_free(msg);
+	return ret;
+}
+#endif /* CONFIG_DRIVER_NL80211_MORSE */
 
 static struct nl_sock * nl_create_handle(struct nl_cb *cb, const char *dbg)
 {
@@ -1741,8 +1870,13 @@ static int nl80211_get_assoc_freq_handler(struct nl_msg *msg, void *arg)
 		if (!drv->sta_mlo_info.valid_links ||
 		    drv->sta_mlo_info.assoc_link_id == link_id) {
 			ctx->assoc_freq = freq;
-			wpa_printf(MSG_DEBUG, "nl80211: Associated on %u MHz",
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+			wpa_printf(MSG_DEBUG, "nl80211: Associated on %u MHz (5 GHz mapped)",
 				   ctx->assoc_freq);
+#else
+			wpa_printf(MSG_DEBUG, "nl80211: Associated on %u MHz",
+					ctx->assoc_freq);
+#endif
 		}
 	}
 	if (status == NL80211_BSS_STATUS_IBSS_JOINED &&
@@ -2073,6 +2207,9 @@ static int wpa_driver_nl80211_set_country(void *priv, const char *alpha2_arg)
 {
 	struct i802_bss *bss = priv;
 	struct wpa_driver_nl80211_data *drv = bss->drv;
+#ifdef CONFIG_IEEE80211AH
+	os_strlcpy(drv->alpha2, alpha2_arg, 3);
+#else
 	char alpha2[3];
 	struct nl_msg *msg;
 
@@ -2091,6 +2228,7 @@ static int wpa_driver_nl80211_set_country(void *priv, const char *alpha2_arg)
 	}
 	if (send_and_recv_cmd(drv, msg))
 		return -EINVAL;
+#endif
 	return 0;
 }
 
@@ -2116,8 +2254,12 @@ static int wpa_driver_nl80211_get_country(void *priv, char *alpha2)
 {
 	struct i802_bss *bss = priv;
 	struct wpa_driver_nl80211_data *drv = bss->drv;
-	struct nl_msg *msg;
 	int ret;
+#ifdef CONFIG_IEEE80211AH
+	os_strlcpy(alpha2, drv->alpha2, 3);
+	ret = 0;
+#else
+	struct nl_msg *msg;
 
 	msg = nlmsg_alloc();
 	if (!msg)
@@ -2136,6 +2278,7 @@ static int wpa_driver_nl80211_get_country(void *priv, char *alpha2)
 
 	alpha2[0] = '\0';
 	ret = send_and_recv_resp(drv, msg, nl80211_get_country, alpha2);
+#endif
 	if (!alpha2[0])
 		ret = -1;
 
@@ -4376,7 +4519,12 @@ retry:
 			goto fail;
 	}
 	if (params->freq) {
-		wpa_printf(MSG_DEBUG, "  * freq=%d", params->freq);
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+		wpa_printf(MSG_DEBUG, "  * mapped freq=%d",
+#else
+		wpa_printf(MSG_DEBUG, "  * freq=%d",
+#endif /* CONFIG_MORSE_5GHZ_MAPPED */
+		params->freq);
 		if (nla_put_u32(msg, NL80211_ATTR_WIPHY_FREQ, params->freq))
 			goto fail;
 	}
@@ -5227,7 +5375,6 @@ static int nl80211_mbssid(struct nl_msg *msg, struct mbssid_data *params)
 
 	return 0;
 }
-
 #endif /* CONFIG_IEEE80211AX */
 
 
@@ -5387,6 +5534,37 @@ static int nl80211_put_freq_params(struct nl_msg *msg,
 	return 0;
 }
 
+#ifdef CONFIG_DRIVER_NL80211_MORSE
+static int morse_set_mbssid_info(struct i802_bss *bss, const char *tx_iface,
+								u8 max_bss_index)
+{
+	struct wpa_driver_nl80211_data *drv = bss->drv;
+	struct morse_cmd_req_mbssid req;
+	int ret;
+
+	os_memset(&req, 0, sizeof(req));
+	req.hdr.message_id = host_to_le16(MORSE_CMD_ID_MBSSID);
+	req.hdr.len = host_to_le16((u16)(sizeof(req) - sizeof(req.hdr)));
+	req.hdr.flags = host_to_le16(MORSE_CMD_TYPE_REQ);
+	req.max_bssid_indicator = max_bss_index;
+
+	if (tx_iface && tx_iface[0]) {
+		os_strlcpy((char *) req.transmitter_iface,
+			   tx_iface,
+			   sizeof(req.transmitter_iface));
+	} else {
+		req.transmitter_iface[0] = 0;
+	}
+
+	ret = morse_send_message(drv, &req, sizeof(req));
+	if (ret)
+		wpa_printf(MSG_ERROR,
+			     "nl80211: Morse set_mbssid_info vendor command failed: ret=%d",
+			     ret);
+
+	return ret;
+}
+#endif /* CONFIG_DRIVER_NL80211_MORSE */
 
 static int wpa_driver_nl80211_set_ap(void *priv,
 				     struct wpa_driver_ap_params *params)
@@ -5736,7 +5914,14 @@ static int wpa_driver_nl80211_set_ap(void *priv,
 	if (nl80211_mbssid(msg, &params->mbssid) < 0)
 		goto fail;
 #endif /* CONFIG_IEEE80211AX */
-
+#ifdef CONFIG_DRIVER_NL80211_MORSE
+	if (params->mbssid.mbssid_tx_iface) {
+		if (morse_set_mbssid_info(bss,
+					  params->mbssid.mbssid_tx_iface,
+					  MBSSID_MAX_INTERFACES))
+			goto fail;
+	}
+#endif /* CONFIG_DRIVER_NL80211_MORSE */
 #ifdef CONFIG_SAE
 	if (wpa_key_mgmt_sae(params->key_mgmt_suites) &&
 	    nl80211_put_sae_pwe(msg, params->sae_pwe) < 0)
@@ -5771,6 +5956,9 @@ static int wpa_driver_nl80211_set_ap(void *priv,
 	if (ret) {
 		wpa_printf(MSG_DEBUG, "nl80211: Beacon set failed: %d (%s)",
 			   ret, strerror(-ret));
+		if (!link->beacon_set)
+			ret = 0;
+		link->beacon_set = 0;
 	} else {
 		link->beacon_set = 1;
 		nl80211_set_bss(bss, params->cts_protect, params->preamble,
@@ -5944,8 +6132,8 @@ static int wpa_driver_nl80211_sta_add(void *priv,
 			"NL80211_CMD_NEW_STATION";
 	}
 
-	wpa_printf(MSG_DEBUG, "nl80211: %s STA " MACSTR,
-		   cmd_string, MAC2STR(params->addr));
+	wpa_printf(MSG_DEBUG, "nl80211: %s STA Flags:%x " MACSTR,
+		   cmd_string, params->flags, MAC2STR(params->addr));
 	msg = nl80211_bss_msg(bss, 0, cmd);
 	if (!msg)
 		goto fail;
@@ -7093,7 +7281,12 @@ static int nl80211_connect_common(struct wpa_driver_nl80211_data *drv,
 
 	if (params->freq.freq) {
 		if (!params->mld_params.mld_addr) {
-			wpa_printf(MSG_DEBUG, "  * freq=%d", params->freq.freq);
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+			wpa_printf(MSG_DEBUG, "  * mapped freq=%d",
+#else
+			wpa_printf(MSG_DEBUG, "  * freq=%d",
+#endif /* CONFIG_MORSE_5GHZ_MAPPED */
+				   params->freq.freq);
 			if (nla_put_u32(msg, NL80211_ATTR_WIPHY_FREQ,
 					params->freq.freq))
 				return -1;
@@ -9524,6 +9717,7 @@ fail:
 
 static int wpa_driver_nl80211_send_action(struct i802_bss *bss,
 					  unsigned int freq,
+					  unsigned int freq_offset,
 					  unsigned int wait_time,
 					  const u8 *dst, const u8 *src,
 					  const u8 *bssid,
@@ -9689,7 +9883,7 @@ static int nl80211_put_any_link_id(struct nl_msg *msg,
 
 
 static int wpa_driver_nl80211_remain_on_channel(void *priv, unsigned int freq,
-						unsigned int duration)
+						unsigned int freq_offset, unsigned int duration)
 {
 	struct i802_bss *bss = priv;
 	struct wpa_driver_nl80211_data *drv = bss->drv;
@@ -9709,8 +9903,9 @@ static int wpa_driver_nl80211_remain_on_channel(void *priv, unsigned int freq,
 	ret = send_and_recv_resp(drv, msg, cookie_handler, &cookie);
 	if (ret == 0) {
 		wpa_printf(MSG_DEBUG, "nl80211: Remain-on-channel cookie "
-			   "0x%llx for freq=%u MHz duration=%u",
-			   (long long unsigned int) cookie, freq, duration);
+			   "0x%llx for freq=%u.%03u MHz duration=%u",
+			   (unsigned long long) cookie, freq,
+			   freq_offset, duration);
 		drv->remain_on_chan_cookie = cookie;
 		drv->pending_remain_on_chan = 1;
 		return 0;
@@ -11335,7 +11530,7 @@ static bool nl80211_is_drv_shared(void *priv, int link_id)
 
 static int driver_nl80211_send_mlme(void *priv, const u8 *data,
 				    size_t data_len, int noack,
-				    unsigned int freq,
+				    unsigned int freq, unsigned int freq_offset,
 				    const u16 *csa_offs, size_t csa_offs_len,
 				    int no_encrypt, unsigned int wait,
 				    int link_id)
@@ -11375,6 +11570,7 @@ static int driver_nl80211_read_sta_data(void *priv,
 
 
 static int driver_nl80211_send_action(void *priv, unsigned int freq,
+				      unsigned int freq_offset,
 				      unsigned int wait_time,
 				      const u8 *dst, const u8 *src,
 				      const u8 *bssid,
@@ -11382,7 +11578,8 @@ static int driver_nl80211_send_action(void *priv, unsigned int freq,
 				      int no_cck, int link_id)
 {
 	struct i802_bss *bss = priv;
-	return wpa_driver_nl80211_send_action(bss, freq, wait_time, dst, src,
+	return wpa_driver_nl80211_send_action(bss, freq, freq_offset,
+					      wait_time, dst, src,
 					      bssid, data, data_len, no_cck,
 					      link_id);
 }
@@ -12092,7 +12289,6 @@ static int vendor_reply_handler(struct nl_msg *msg, void *arg)
 	return NL_SKIP;
 }
 
-
 static bool is_cmd_with_nested_attrs(unsigned int vendor_id,
 				     unsigned int subcmd)
 {
@@ -12525,6 +12721,9 @@ static int nl80211_put_mesh_config(struct nl_msg *msg,
 	    ((params->flags & WPA_DRIVER_MESH_CONF_FLAG_FORWARDING) &&
 	     nla_put_u8(msg, NL80211_MESHCONF_FORWARDING,
 			params->forwarding)) ||
+	    ((params->flags & WPA_DRIVER_MESH_CONF_FLAG_NOLEARN) &&
+	     nla_put_u8(msg, NL80211_MESHCONF_NOLEARN,
+			params->nolearn)) ||
 	    ((params->flags & WPA_DRIVER_MESH_CONF_FLAG_MAX_PEER_LINKS) &&
 	     nla_put_u16(msg, NL80211_MESHCONF_MAX_PEER_LINKS,
 			 params->max_peer_links)) ||
@@ -12549,6 +12748,24 @@ static int nl80211_put_mesh_config(struct nl_msg *msg,
 		wpa_printf(MSG_ERROR, "nl80211: Failed to set HT_OP_MODE");
 		return -1;
 	}
+
+	/*
+	 * HWPM Related parameters
+	 */
+	if ((params->flags & WPA_DRIVER_MESH_CONF_FLAG_ROOTMODE) &&
+	     nla_put_u8(msg, NL80211_MESHCONF_HWMP_ROOTMODE, params->dot11MeshHWMPRootMode)) {
+		wpa_printf(MSG_ERROR, "nl80211: Failed to set HWMP_ROOTMODE");
+		return -1;
+	}
+
+	if ((params->flags & WPA_DRIVER_MESH_CONF_FLAG_GATE_ANNOUNCEMENTS) &&
+	     nla_put_u8(msg, NL80211_MESHCONF_GATE_ANNOUNCEMENTS,
+	     		params->dot11MeshGateAnnouncements) &&
+	     nla_put_u8(msg, NL80211_MESHCONF_CONNECTED_TO_GATE, 1)) {
+		wpa_printf(MSG_ERROR, "nl80211: Failed to set GATE_ANNOUNCEMENTS");
+		return -1;
+	}
+
 
 	nla_nest_end(msg, container);
 
@@ -15098,6 +15315,57 @@ static int testing_nl80211_radio_disable(void *priv, int disabled)
 
 #endif /* CONFIG_TESTING_OPTIONS */
 
+#ifdef CONFIG_MORSE_WNM
+static int nl80211_wnm_oper(void *priv, enum wnm_oper oper, const u8 *peer,
+			u8 *buf, u16 *buf_len)
+{
+	struct i802_bss *bss = priv;
+	struct wpa_driver_nl80211_data *drv = bss->drv;
+	struct morse_cmd_req_set_long_sleep_config req;
+	int ret;
+
+	if (!drv)
+		return -ENODEV;
+
+	os_memset(&req, 0, sizeof(req));
+
+	req.hdr.message_id = host_to_le16(MORSE_CMD_ID_SET_LONG_SLEEP_CONFIG);
+	req.hdr.len = host_to_le16((u16)(sizeof(req) - sizeof(req.hdr)));
+	req.hdr.flags = host_to_le16(MORSE_CMD_TYPE_REQ);
+
+	switch (oper) {
+	case WNM_SLEEP_ENTER_CONFIRM:
+		req.enabled = true;
+		break;
+
+	case WNM_SLEEP_EXIT_CONFIRM:
+		req.enabled = false;
+		break;
+
+	case WNM_SLEEP_ENTER_FAIL:
+		wpa_printf(MSG_WARNING, "Failed to enter WNM Sleep");
+		ret = 0;
+		return ret;
+
+	case WNM_SLEEP_EXIT_FAIL:
+		wpa_printf(MSG_WARNING, "Failed to exit WNM Sleep");
+		req.enabled = false;
+		break;
+
+	default:
+		wpa_printf(MSG_DEBUG, "Unsupported WNM operation %d", oper);
+		return -EOPNOTSUPP;
+	}
+
+	ret = morse_send_message(drv, &req, sizeof(req));
+	if (ret)
+		wpa_printf(MSG_ERROR,
+			     "nl80211: Morse long_sleep vendor command failed: ret=%d",
+			     ret);
+
+	return ret;
+}
+#endif
 
 static struct hostapd_multi_hw_info *
 wpa_driver_get_multi_hw_info(void *priv, unsigned int *num_multi_hws)
@@ -15107,6 +15375,655 @@ wpa_driver_get_multi_hw_info(void *priv, unsigned int *num_multi_hws)
 	return nl80211_get_multi_hw_info(bss, num_multi_hws);
 }
 
+#ifdef CONFIG_DRIVER_NL80211_MORSE
+static int nl80211_set_s1g_op_class(void *priv, u8 opclass, u8 prim_opclass)
+{
+	struct i802_bss *bss = priv;
+	struct wpa_driver_nl80211_data *drv = bss->drv;
+	struct morse_cmd_req_set_s1g_op_class req;
+	int ret;
+
+	if (!drv)
+		return -ENODEV;
+
+	os_memset(&req, 0, sizeof(req));
+	req.hdr.message_id = host_to_le16(MORSE_CMD_ID_SET_S1G_OP_CLASS);
+	req.hdr.len = host_to_le16((u16)(sizeof(req) - sizeof(req.hdr)));
+	req.hdr.flags = host_to_le16(MORSE_CMD_TYPE_REQ);
+	req.opclass = opclass;
+	req.prim_opclass = prim_opclass;
+
+	ret = morse_send_message(drv, &req, sizeof(req));
+	if (ret)
+		wpa_printf(MSG_ERROR,
+			     "nl80211: Morse set_op_class vendor command failed: ret=%d",
+			     ret);
+
+	return ret;
+}
+
+static int nl80211_set_s1g_channel(void *priv, int oper_freq,
+					     int oper_chwidth, u8 prim_chwidth,
+					     u8 prim_1mhz_ch_idx)
+{
+	struct i802_bss *bss = priv;
+	struct wpa_driver_nl80211_data *drv = bss->drv;
+	struct morse_cmd_req_set_channel req;
+	struct morse_cmd_req_get_channel req_get;
+	struct morse_cmd_resp_get_channel *resp;
+	struct wpabuf *reply;
+	int ret;
+
+	if (!drv)
+		return -ENODEV;
+
+	os_memset(&req, 0, sizeof(req));
+	req.hdr.message_id = host_to_le16(MORSE_CMD_ID_SET_CHANNEL);
+	req.hdr.len = host_to_le16((u16)(sizeof(req) - sizeof(req.hdr)));
+	req.hdr.flags = host_to_le16(MORSE_CMD_TYPE_REQ);
+	req.op_chan_freq_hz = host_to_le32(oper_freq * 1000);
+	req.op_bw_mhz = oper_chwidth;
+	req.pri_bw_mhz = prim_chwidth;
+	req.pri_1mhz_chan_idx = prim_1mhz_ch_idx;
+	req.dot11_mode = 0;
+	req.__deprecated_reg_tx_power_set = 1;
+	req.is_off_channel = 0;
+
+	os_memset(&req_get, 0, sizeof(req_get));
+	req_get.hdr.message_id = host_to_le16(MORSE_CMD_ID_GET_CHANNEL_FULL);
+	req_get.hdr.len = host_to_le16((u16)(sizeof(req_get) - sizeof(req_get.hdr)));
+	req_get.hdr.flags = host_to_le16(MORSE_CMD_TYPE_REQ);
+
+	ret = morse_send_message(drv, &req, sizeof(req));
+	if (ret) {
+		wpa_printf(MSG_ERROR,
+			     "nl80211: Morse set_channel vendor command failed: ret=%d",
+			     ret);
+		return ret;
+	}
+
+	reply = wpabuf_alloc(sizeof(*resp));
+	if (!reply) {
+		wpa_printf(MSG_ERROR, "Failed to allocate wpa buffer");
+		return -ENOMEM;
+	}
+
+	ret = morse_send_message_with_resp(drv, &req_get, sizeof(req_get), reply);
+
+	if (ret) {
+		wpa_printf(MSG_ERROR,
+			     "nl80211: Morse get_channel_full vendor command failed: ret=%d",
+			     ret);
+		goto out;
+	}
+
+	if (wpabuf_len(reply) < sizeof(*resp)) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	resp = (void *) wpabuf_head(reply);
+
+	wpa_printf(MSG_DEBUG, "  * Operating Frequency=%u kHz",
+				le_to_host32(resp->op_chan_freq_hz) / 1000);
+	wpa_printf(MSG_DEBUG, "  * Operating BW=%u MHz", resp->op_chan_bw_mhz);
+	wpa_printf(MSG_DEBUG, "  * Primary BW=%u MHz", resp->pri_chan_bw_mhz);
+	wpa_printf(MSG_DEBUG, "  * Primary Channel Index=%u", resp->pri_1mhz_chan_idx);
+
+	return ret;
+
+out:
+	wpabuf_free(reply);
+	return ret;
+}
+
+static int nl80211_set_ecsa_parameters(void *priv, u8 global_oper_class,
+						   u8 prim_chwidth, int oper_chwidth,
+						   int oper_freq, u8 prim_1mhz_ch_idx,
+						   u8 prim_global_op_class, u32 s1g_capab)
+{
+	struct i802_bss *bss = priv;
+	struct wpa_driver_nl80211_data *drv = bss->drv;
+	struct morse_cmd_req_set_ecsa_s1g_info req;
+	int ret;
+
+	if (!drv)
+		return -ENODEV;
+
+	os_memset(&req, 0, sizeof(req));
+	req.hdr.message_id = host_to_le16(MORSE_CMD_ID_SET_ECSA_S1G_INFO);
+	req.hdr.len = host_to_le16((u16)(sizeof(req) - sizeof(req.hdr)));
+	req.hdr.flags = host_to_le16(MORSE_CMD_TYPE_REQ);
+	req.operating_channel_freq_hz = host_to_le32(oper_freq * 1000);
+	req.opclass = global_oper_class;
+	req.primary_channel_bw_mhz = prim_chwidth;
+	req.prim_1mhz_ch_idx = prim_1mhz_ch_idx;
+	req.operating_channel_bw_mhz = oper_chwidth;
+	req.prim_opclass = prim_global_op_class;
+	req.s1g_cap0 = s1g_capab & 0xFF;
+	req.s1g_cap1 = (s1g_capab >> 8) & 0xFF;
+	req.s1g_cap2 = (s1g_capab >> 16) & 0xFF;
+	req.s1g_cap3 = (s1g_capab >> 24) & 0xFF;
+
+	ret = morse_send_message(drv, &req, sizeof(req));
+	if (ret)
+		wpa_printf(MSG_ERROR,
+			     "nl80211: Morse set ecsa_params vendor command failed: ret=%d",
+			     ret);
+
+	return ret;
+}
+
+#ifdef CONFIG_MORSE_KEEP_ALIVE_OFFLOAD
+static int nl80211_set_keep_alive(void *priv, u16 bss_max_idle_period, bool as_11ah)
+{
+	struct i802_bss *bss = priv;
+	struct wpa_driver_nl80211_data *drv = bss->drv;
+	struct morse_cmd_req_set_keep_alive_offload req;
+	int ret;
+
+	if (!drv)
+		return -ENODEV;
+
+	os_memset(&req, 0, sizeof(req));
+	req.hdr.message_id = host_to_le16(MORSE_CMD_ID_SET_KEEP_ALIVE_OFFLOAD);
+	req.hdr.len = host_to_le16((u16)(sizeof(req) - sizeof(req.hdr)));
+	req.hdr.flags = host_to_le16(MORSE_CMD_TYPE_REQ);
+	req.bss_max_idle_period = bss_max_idle_period;
+	req.interpret_as_11ah = as_11ah;
+
+	ret = morse_send_message(drv, &req, sizeof(req));
+	if (ret)
+		wpa_printf(MSG_ERROR,
+			     "nl80211: Morse set keep_alive vendor command failed: ret=%d",
+			     ret);
+
+	return ret;
+}
+#endif
+
+#ifdef CONFIG_S1G_TWT
+static int nl80211_twt_conf(void *priv, struct morse_twt *twt_config)
+{
+	struct i802_bss *bss = priv;
+	struct wpa_driver_nl80211_data *drv = bss->drv;
+	struct morse_cmd_req_set_twt_conf req;
+	int ret;
+
+	if (!drv)
+		return -ENODEV;
+
+	os_memset(&req, 0, sizeof(req));
+	req.hdr.message_id = host_to_le16(MORSE_CMD_ID_SET_TWT_CONF);
+	req.hdr.len = host_to_le16((u16)(sizeof(req) - sizeof(req.hdr)));
+	req.hdr.flags = host_to_le16(MORSE_CMD_TYPE_REQ);
+	req.opcode = MORSE_CMD_TWT_CONF_OP_CONFIGURE;
+	req.flow_id = 0;
+	req.wake_interval.wake_interval_us = host_to_le64(twt_config->wake_interval_us);
+	req.wake_duration_us = host_to_le64(twt_config->wake_duration_us);
+	req.twt_setup_command = twt_config->setup_command;
+
+	ret = morse_send_message(drv, &req, sizeof(req));
+	if (ret)
+		wpa_printf(MSG_ERROR,
+			     "nl80211: Morse twt_conf vendor command failed: ret=%d",
+			     ret);
+
+	return ret;
+}
+#endif
+
+static int nl80211_cac_conf(void *priv, bool enable)
+{
+	struct i802_bss *bss = priv;
+	struct wpa_driver_nl80211_data *drv = bss->drv;
+	struct morse_cmd_req_cac req;
+	int ret;
+
+	if (!drv)
+		return -ENODEV;
+
+	os_memset(&req, 0, sizeof(req));
+	req.hdr.message_id = host_to_le16(MORSE_CMD_ID_CAC);
+	req.hdr.len = host_to_le16((u16)(sizeof(req) - sizeof(req.hdr)));
+	req.hdr.flags = host_to_le16(MORSE_CMD_TYPE_REQ);
+	req.opcode = enable ? MORSE_CMD_CAC_OP_ENABLE : MORSE_CMD_CAC_OP_DISABLE;
+
+	ret = morse_send_message(drv, &req, sizeof(req));
+	if (ret)
+		wpa_printf(MSG_ERROR,
+			     "nl80211: Morse cac_conf vendor command failed: ret=%d",
+			     ret);
+
+	return ret;
+}
+
+static int nl80211_set_mesh_s1g_config(void *priv, u8 *mesh_id, u8 mesh_id_len,
+						   u8 beaconless_mode,
+						   u8 max_plinks)
+{
+	struct i802_bss *bss = priv;
+	struct wpa_driver_nl80211_data *drv = bss->drv;
+	struct morse_cmd_req_set_mesh_config req;
+	int ret;
+
+	if (!drv)
+		return -ENODEV;
+
+	os_memset(&req, 0, sizeof(req));
+	req.hdr.message_id = host_to_le16(MORSE_CMD_ID_SET_MESH_CONFIG);
+	req.hdr.len = host_to_le16((u16)(sizeof(req) - sizeof(req.hdr)));
+	req.hdr.flags = host_to_le16(MORSE_CMD_TYPE_REQ);
+	req.mesh_id_len = mesh_id_len;
+	os_memcpy(req.mesh_id, mesh_id, mesh_id_len);
+	req.mesh_beaconless_mode = beaconless_mode;
+	req.max_plinks = max_plinks;
+
+	ret = morse_send_message(drv, &req, sizeof(req));
+	if (ret)
+		wpa_printf(MSG_ERROR,
+				"nl80211: Morse mesh_config vendor command failed: ret=%d",
+				ret);
+
+	return ret;
+}
+
+static int nl80211_mbca_conf(void *priv, u8 mbca_config, u8 min_beacon_gap,
+				     u8 tbtt_adj_interval,
+				     u8 beacon_timing_report_interval,
+				     u16 mbss_start_scan_duration)
+{
+	struct i802_bss *bss = priv;
+	struct wpa_driver_nl80211_data *drv = bss->drv;
+	struct morse_cmd_req_set_mcba_conf req;
+	int ret;
+
+	if (!drv)
+		return -ENODEV;
+
+	os_memset(&req, 0, sizeof(req));
+	req.hdr.message_id = host_to_le16(MORSE_CMD_ID_SET_MCBA_CONF);
+	req.hdr.len = host_to_le16((u16)(sizeof(req) - sizeof(req.hdr)));
+	req.hdr.flags = host_to_le16(MORSE_CMD_TYPE_REQ);
+	req.mbca_config = mbca_config;
+	req.beacon_timing_report_interval = beacon_timing_report_interval;
+	req.min_beacon_gap_ms = min_beacon_gap;
+	req.mbss_start_scan_duration_ms = host_to_le16(mbss_start_scan_duration);
+	req.tbtt_adj_interval_ms = host_to_le16(1000 * tbtt_adj_interval);
+
+	ret = morse_send_message(drv, &req, sizeof(req));
+	if (ret)
+		wpa_printf(MSG_ERROR,
+			     "nl80211: Morse mbca conf vendor command failed: ret=%d",
+			     ret);
+
+	return ret;
+}
+
+static int nl80211_set_mesh_dynamic_peering(void *priv, bool enabled, u8 rssi_margin,
+							  u32 blacklist_timeout)
+{
+	struct i802_bss *bss = priv;
+	struct wpa_driver_nl80211_data *drv = bss->drv;
+	struct morse_cmd_req_dynamic_peering_config req;
+	int ret;
+
+	if (!drv)
+		return -ENODEV;
+
+	os_memset(&req, 0, sizeof(req));
+	req.hdr.message_id = host_to_le16(MORSE_CMD_ID_DYNAMIC_PEERING_CONFIG);
+	req.hdr.len = host_to_le16((u16)(sizeof(req) - sizeof(req.hdr)));
+	req.hdr.flags = host_to_le16(MORSE_CMD_TYPE_REQ);
+
+	req.enabled = enabled ? true : false;
+	req.rssi_margin = rssi_margin;
+	req.blacklist_timeout = host_to_le32(blacklist_timeout);
+
+	ret = morse_send_message(drv, &req, sizeof(req));
+	if (ret)
+		wpa_printf(MSG_ERROR,
+			     "nl80211: Morse mesh dynamic peering vendor command failed: ret=%d",
+			     ret);
+
+	return ret;
+}
+
+static int nl80211_raw_global_enable(void *priv, bool enable)
+{
+	struct i802_bss *bss = priv;
+	struct wpa_driver_nl80211_data *drv = bss->drv;
+	struct morse_cmd_req_config_raw *req;
+	size_t total_len;
+	u16 payload_len;
+	int ret;
+
+	req = os_zalloc(sizeof(*req));
+	if (!req)
+		return -1;
+
+	req->flags = enable ?
+		host_to_le32(MORSE_CMD_CFG_RAW_FLAG_ENABLE) : 0;
+	req->id = host_to_le16(0);
+
+	payload_len = sizeof(req->flags) + sizeof(req->id);
+
+	req->hdr.message_id = host_to_le16(MORSE_CMD_ID_CONFIG_RAW);
+	req->hdr.len = host_to_le16(payload_len);
+
+	total_len = sizeof(req->hdr) + payload_len;
+
+	ret = morse_send_message(drv, req, total_len);
+	if (ret)
+		wpa_printf(MSG_ERROR,
+			     "nl80211: Morse CONFIG_RAW global %s failed (ret=%d)",
+			     enable ? "enable" : "disable", ret);
+
+	os_free(req);
+	return ret;
+}
+
+static inline u16 morse_raw_prio_to_raw_idx(u16 prio)
+{
+	return prio + MORSE_RAW_ID_HOSTAPD_PRIO_OFFSET;
+}
+
+static void morse_raw_prio_to_aid_range(u8 prio, u16 *aid_start, u16 *aid_end)
+{
+	if (prio == 0) {
+		*aid_start = MORSE_RAW_DEFAULT_START_AID;
+		*aid_end = (__UINT16_MAX__ & MORSE_RAW_AID_DEVICE_MASK);
+	} else if ((prio > 0) && (prio < (MORSE_MAX_NUM_RAWS_USER_PRIO - 1))) {
+		*aid_start = (prio << MORSE_RAW_AID_PRIO_SHIFT);
+		*aid_end = *aid_start + (__UINT16_MAX__ & MORSE_RAW_AID_DEVICE_MASK);
+	} else if (prio == (MORSE_MAX_NUM_RAWS_USER_PRIO - 1)) {
+		*aid_start = (prio << MORSE_RAW_AID_PRIO_SHIFT);
+		*aid_end = MAX_AID;
+	} else {
+		WPA_ASSERT(false);
+	}
+}
+
+static int nl80211_raw_priority_enable(void *priv, bool enable, u8 prio,
+						   u32 start_time_us, u32 duration_us,
+						   u8 num_slots, bool cross_slot,
+						   u16 max_bcn_spread,
+						   u16 nom_stas_per_bcn,
+						   u8 praw_period,
+						   u8 praw_start_offset)
+{
+	struct i802_bss *bss = priv;
+	struct wpa_driver_nl80211_data *drv = bss->drv;
+	struct morse_cmd_req_config_raw *req;
+	union morse_cmd_raw_tlvs *tlv;
+	u8 *tlv_ptr;
+	size_t base_len, cmd_max_size;
+	size_t total_len;
+	u16 payload_len;
+	u16 raw_id;
+	u16 aid_start = 0, aid_end = 0;
+	int ret;
+
+	raw_id = morse_raw_prio_to_raw_idx(prio);
+
+	if (!enable) {
+		req = os_zalloc(sizeof(*req));
+		if (!req)
+			return -1;
+
+		req->flags = 0;
+		req->id = host_to_le16(raw_id);
+
+		payload_len = sizeof(*req) - sizeof(req->hdr);
+
+		req->hdr.message_id = host_to_le16(MORSE_CMD_ID_CONFIG_RAW);
+		req->hdr.len    = host_to_le16(payload_len);
+
+		total_len = sizeof(*req);
+
+		ret = morse_send_message(drv, req, total_len);
+		if (ret)
+			wpa_printf(MSG_WARNING,
+				     "morse: CONFIG_RAW disable prio=%u failed (ret=%d)",
+				     prio, ret);
+
+		os_free(req);
+		return ret;
+	}
+
+	base_len = sizeof(struct morse_cmd_req_config_raw);
+	cmd_max_size = base_len +
+		(sizeof(union morse_cmd_raw_tlvs) * MORSE_CMD_RAW_TLV_TAG_LAST);
+
+	req = os_zalloc(cmd_max_size);
+	if (!req)
+		return -1;
+
+	tlv = (union morse_cmd_raw_tlvs *) &req->variable[0];
+	tlv_ptr = (u8 *) tlv;
+
+	morse_raw_prio_to_aid_range(prio, &aid_start, &aid_end);
+
+	req->flags = host_to_le32(MORSE_CMD_CFG_RAW_FLAG_ENABLE);
+	req->id = host_to_le16(raw_id);
+
+	if (num_slots == 0 || num_slots > 63) {
+		wpa_printf(MSG_ERROR,
+			     "morse: RAW prio=%u invalid num_slots=%u (1-63)",
+			     prio, num_slots);
+		goto fail;
+	}
+
+	u32 min_raw = num_slots * RAW_CMD_MIN_SLOT_DUR_US;
+	u32 max_raw = num_slots * RAW_CMD_MAX_SLOT_DUR_US;
+
+	if (duration_us < min_raw || duration_us > max_raw) {
+		wpa_printf(MSG_ERROR,
+			     "morse: RAW prio=%u invalid duration_us=%u (allowed [%u..%u] for %u slots)",
+			     prio, duration_us, min_raw, max_raw,
+			     num_slots);
+		goto fail;
+	}
+
+	tlv->slot_def.tag = MORSE_CMD_RAW_TLV_TAG_SLOT_DEF;
+	tlv->slot_def.raw_duration_us = host_to_le32(duration_us);
+	tlv->slot_def.num_slots = num_slots;
+	tlv->slot_def.cross_slot_bleed = cross_slot ? 1 : 0;
+
+	tlv_ptr += sizeof(tlv->slot_def);
+	tlv = (union morse_cmd_raw_tlvs *) tlv_ptr;
+
+	if (aid_start < 1 || aid_end > RAW_CMD_MAX_AID || aid_start > aid_end) {
+		wpa_printf(MSG_ERROR,
+			     "morse: RAW prio=%u invalid AID range [%u..%u] (1..%u)",
+			     prio, aid_start, aid_end, RAW_CMD_MAX_AID);
+		goto fail;
+	}
+
+	tlv->group.tag = MORSE_CMD_RAW_TLV_TAG_GROUP;
+	tlv->group.aid_start = host_to_le16(aid_start);
+	tlv->group.aid_end = host_to_le16(aid_end);
+
+	tlv_ptr += sizeof(tlv->group);
+	tlv = (union morse_cmd_raw_tlvs *) tlv_ptr;
+
+	if (start_time_us > RAW_CMD_MAX_START_TIME_US) {
+		wpa_printf(MSG_ERROR,
+			     "morse: RAW prio=%u invalid start_time=%u (0..%u)",
+			     prio, start_time_us, RAW_CMD_MAX_START_TIME_US);
+		goto fail;
+	}
+
+	tlv->start_time.tag = MORSE_CMD_RAW_TLV_TAG_START_TIME;
+	tlv->start_time.start_time_us = host_to_le32(start_time_us);
+
+	tlv_ptr += sizeof(tlv->start_time);
+	tlv = (union morse_cmd_raw_tlvs *) tlv_ptr;
+
+	if (nom_stas_per_bcn && praw_period) {
+		wpa_printf(MSG_ERROR,
+			     "morse: RAW prio=%u both beacon spreading and PRAW configured",
+			     prio);
+		goto fail;
+	}
+
+	if (nom_stas_per_bcn) {
+		tlv->bcn_spread.tag = MORSE_CMD_RAW_TLV_TAG_BCN_SPREAD;
+		tlv->bcn_spread.max_spread =
+			host_to_le16(max_bcn_spread);
+		tlv->bcn_spread.nominal_sta_per_bcn =
+			host_to_le16(nom_stas_per_bcn);
+
+		tlv_ptr += sizeof(tlv->bcn_spread);
+		tlv = (union morse_cmd_raw_tlvs *) tlv_ptr;
+	}
+
+	if (!nom_stas_per_bcn && praw_period) {
+		u8 periodicity = praw_period;
+		u8 start_off = praw_start_offset;
+
+		if (periodicity < 1) {
+			wpa_printf(MSG_ERROR,
+				     "morse: RAW prio=%u invalid PRAW periodicity=%u (1..255)",
+				     prio, periodicity);
+			goto fail;
+		}
+
+		if (start_off >= periodicity) {
+			wpa_printf(MSG_ERROR,
+				     "morse: RAW prio=%u invalid PRAW start_offset=%u (must be < periodicity=%u)",
+				     prio, start_off, periodicity);
+			goto fail;
+		}
+
+		tlv->praw.tag = MORSE_CMD_RAW_TLV_TAG_PRAW;
+		tlv->praw.periodicity = periodicity;
+
+		tlv->praw.validity = 255;
+		tlv->praw.refresh_on_expiry = 1;
+		tlv->praw.start_offset = start_off;
+
+		tlv_ptr += sizeof(tlv->praw);
+		tlv = (union morse_cmd_raw_tlvs *) tlv_ptr;
+	}
+
+	if (tlv_ptr > &req->variable[0])
+		req->flags |= host_to_le32(MORSE_CMD_CFG_RAW_FLAG_UPDATE);
+
+	payload_len = tlv_ptr - (u8 *) &req->flags;
+
+	req->hdr.message_id = host_to_le16(MORSE_CMD_ID_CONFIG_RAW);
+	req->hdr.len = host_to_le16(payload_len);
+
+	total_len = sizeof(req->hdr) + payload_len;
+
+	if (total_len > cmd_max_size) {
+		wpa_printf(MSG_ERROR,
+			     "morse: RAW prio=%u length error (total_len=%zu, max=%zu)",
+			     prio, total_len, cmd_max_size);
+		goto fail;
+	}
+
+	ret = morse_send_message(drv, req, total_len);
+	if (ret)
+		wpa_printf(MSG_WARNING,
+			     "nl80211: Morse CONFIG_RAW set prio=%u failed (ret=%d)",
+			     prio, ret);
+
+	os_free(req);
+	return ret;
+
+fail:
+	os_free(req);
+	return -1;
+}
+
+static int nl80211_get_set(void *priv,
+				   enum morse_cmd_param_id param_id,
+				   enum morse_cmd_param_action action,
+				   u32 value_in,
+				   u32 *value_out)
+{
+	struct i802_bss *bss = priv;
+	struct wpa_driver_nl80211_data *drv = bss->drv;
+	struct morse_cmd_req_get_set_generic_param req;
+	struct morse_cmd_resp_get_set_generic_param *resp;
+	struct wpabuf *reply = NULL;
+	int ret = 0;
+
+	os_memset(&req, 0, sizeof(req));
+	os_memset(&resp, 0, sizeof(resp));
+
+	req.hdr.message_id = host_to_le16(MORSE_CMD_ID_GET_SET_GENERIC_PARAM);
+	req.hdr.len = host_to_le16((u16)(sizeof(req) - sizeof(req.hdr)));
+	req.hdr.flags = host_to_le16(MORSE_CMD_TYPE_REQ);
+
+	req.param_id = host_to_le32(param_id);
+	req.action = host_to_le32(action);
+	req.flags = host_to_le32(0);
+
+	reply = wpabuf_alloc(sizeof(*resp));
+	if (!reply) {
+		wpa_printf(MSG_ERROR, "Failed to allocate wpa buffer");
+		return -ENOMEM;
+	}
+
+	if (action == MORSE_CMD_PARAM_ACTION_SET) {
+		req.value = host_to_le32((u32) value_in);
+		ret = morse_send_message(drv, &req, sizeof(req));
+		if (ret) {
+			wpa_printf(MSG_ERROR,
+				     "nl80211: Morse set param vendor command failed: ret=%d", ret);
+			goto out;
+		}
+	} else {
+		ret = morse_send_message_with_resp(drv, &req, sizeof(req), reply);
+		if (ret) {
+			wpa_printf(MSG_ERROR,
+				     "nl80211: Morse get param vendor command failed: ret=%d", ret);
+			goto out;
+		}
+
+		if (wpabuf_len(reply) < sizeof(*resp)) {
+			ret = -EINVAL;
+			goto out;
+		}
+
+		resp = (void *) wpabuf_head(reply);
+		*value_out = (s32) le_to_host32(resp->value);
+	}
+
+out:
+	wpabuf_free(reply);
+	return ret;
+}
+
+static int nl80211_s1g_bss_color(void *priv, u8 s1g_bss_color)
+{
+	struct i802_bss *bss = priv;
+	struct wpa_driver_nl80211_data *drv = bss->drv;
+	struct morse_cmd_req_set_bss_color req;
+	int ret;
+
+	if (!drv)
+		return -ENODEV;
+
+	os_memset(&req, 0, sizeof(req));
+
+	req.hdr.message_id = host_to_le16(MORSE_CMD_ID_SET_BSS_COLOR);
+	req.hdr.len = host_to_le16((u16)(sizeof(req) - sizeof(req.hdr)));
+	req.hdr.flags = host_to_le16(MORSE_CMD_TYPE_REQ);
+
+	req.bss_color = s1g_bss_color;
+
+	ret = morse_send_message(drv, &req, sizeof(req));
+	if (ret)
+		wpa_printf(MSG_ERROR,
+			     "nl80211: Morse set_bss_color vendor command failed: ret=%d", ret);
+
+	return ret;
+}
+#endif /* CONFIG_DRIVER_NL80211_MORSE */
 
 const struct wpa_driver_ops wpa_driver_nl80211_ops = {
 	.name = "nl80211",
@@ -15279,4 +16196,26 @@ const struct wpa_driver_ops wpa_driver_nl80211_ops = {
 	.radio_disable = testing_nl80211_radio_disable,
 #endif /* CONFIG_TESTING_OPTIONS */
 	.get_multi_hw_info = wpa_driver_get_multi_hw_info,
+#ifdef CONFIG_MORSE_WNM
+	.wnm_oper = nl80211_wnm_oper,
+#endif
+#ifdef CONFIG_DRIVER_NL80211_MORSE
+	.set_s1g_op_class = nl80211_set_s1g_op_class,
+	.set_s1g_channel = nl80211_set_s1g_channel,
+	.set_ecsa_parameters = nl80211_set_ecsa_parameters,
+#ifdef CONFIG_MORSE_KEEP_ALIVE_OFFLOAD
+	.set_keep_alive = nl80211_set_keep_alive,
+#endif
+#ifdef CONFIG_S1G_TWT
+	.twt_conf = nl80211_twt_conf,
+#endif
+	.cac_conf = nl80211_cac_conf,
+	.set_mesh_config = nl80211_set_mesh_s1g_config,
+	.mbca_conf = nl80211_mbca_conf,
+	.set_mesh_dynamic_peering = nl80211_set_mesh_dynamic_peering,
+	.raw_global_enable = nl80211_raw_global_enable,
+	.raw_priority_enable = nl80211_raw_priority_enable,
+	.param_get_set = nl80211_get_set,
+	.set_bss_color = nl80211_s1g_bss_color
+#endif /* CONFIG_DRIVER_NL80211_MORSE */
 };

@@ -1,4 +1,16 @@
-BINALL=wpa_supplicant wpa_cli
+#
+# Copyright 2021 Morse Micro
+#
+
+BINALL=wpa_supplicant_s1g wpa_cli_s1g
+
+CONFIG_FILE=.config
+include $(CONFIG_FILE)
+CONFIG_FILE=
+
+ifndef CONFIG_NO_WPA_PASSPHRASE
+BINALL += wpa_passphrase_s1g
+endif
 
 ALL = $(BINALL)
 ALL += systemd/wpa_supplicant.service
@@ -9,25 +21,24 @@ ALL += dbus/fi.w1.wpa_supplicant1.service
 
 EXTRA_TARGETS=dynamic_eap_methods
 
-CONFIG_FILE=.config
 include ../src/build.rules
 
 ifdef CONFIG_BUILD_PASN_SO
 # add the dependency this way to allow CONFIG_BUILD_PASN_SO
 # being set in the config which is read by build.rules
-_all: libpasn.so
+_all: libpasn_s1g.so
 endif
 
 ifdef CONFIG_BUILD_WPA_CLIENT_SO
 # add the dependency this way to allow CONFIG_BUILD_WPA_CLIENT_SO
 # being set in the config which is read by build.rules
-_all: libwpa_client.so
+_all: libwpa_client_s1g.so
 endif
 
 ifndef CONFIG_NO_WPA_PASSPHRASE
 # add the dependency this way to allow CONFIG_NO_WPA_PASSPHRASE
 # being set in the config which is read by build.rules
-_all: wpa_passphrase
+_all: wpa_passphrase_s1g
 endif
 
 ifdef LIBS
@@ -46,7 +57,15 @@ export INCDIR ?= /usr/local/include
 export BINDIR ?= /usr/local/sbin
 PKG_CONFIG ?= pkg-config
 
+EXTRA_CFLAGS += -Wextra -Werror
+ifdef CONFIG_ANDROID
+    EXTRA_CFLAGS += -Wno-string-concatenation -Wuninitialized
+else
+    EXTRA_CFLAGS += -Wno-stringop-truncation -Wmaybe-uninitialized -Wno-missing-attributes
+endif
+EXTRA_CFLAGS += -Wno-unused-parameter
 CFLAGS += $(EXTRA_CFLAGS)
+
 CFLAGS += -I$(abspath ../src)
 CFLAGS += -I$(abspath ../src/utils)
 
@@ -58,6 +77,12 @@ ifneq ($(GITVER),)
 CFLAGS += -DGIT_VERSION_STR_POSTFIX=\"-$(GITVER)\"
 endif
 endif
+endif
+
+# This line used by packaging scripts - do not change
+MORSE_VERSION ?= rel_mm6108_2_0_1_2026_Jun_11
+ifdef MORSE_VERSION
+CFLAGS += -DMORSE_VERSION_STR=\"$(MORSE_VERSION)\"
 endif
 
 ifdef CONFIG_TESTING_OPTIONS
@@ -89,7 +114,7 @@ ifdef CONFIG_BUILD_PASN_SO
 endif
 
 ifdef CONFIG_BUILD_WPA_CLIENT_SO
-	install -m 0644 -D libwpa_client.so $(DESTDIR)/$(LIBDIR)/libwpa_client.so
+	install -m 0644 -D libwpa_client_s1g.so $(DESTDIR)/$(LIBDIR)/libwpa_client_s1g.so
 	install -m 0644 -D ../src/common/wpa_ctrl.h $(DESTDIR)/$(INCDIR)/wpa_ctrl.h
 endif
 	if ls eap_*.so >/dev/null 2>&1; then \
@@ -107,6 +132,7 @@ OBJS += bss.o
 OBJS += eap_register.o
 OBJS += ../src/utils/common.o
 OBJS += ../src/utils/config.o
+OBJS += ../src/utils/morse.o
 OBJS += ../src/utils/wpa_debug.o
 OBJS += ../src/utils/wpabuf.o
 OBJS += ../src/utils/bitfield.o
@@ -164,7 +190,7 @@ endif
 OBJS += ../src/utils/$(CONFIG_ELOOP).o
 OBJS_c += ../src/utils/$(CONFIG_ELOOP).o
 
-ifndef CONFIG_OSX
+ifneq ($(or $(CONFIG_OSX),$(CONFIG_ANDROID)),y)
 ifeq ($(CONFIG_ELOOP), eloop)
 # Using glibc < 2.17 requires -lrt for clock_gettime()
 # OS X has an alternate implementation
@@ -258,6 +284,18 @@ endif
 ifdef CONFIG_IEEE80211R
 CFLAGS += -DCONFIG_IEEE80211R
 OBJS += ../src/rsn_supp/wpa_ft.o
+endif
+
+ifdef CONFIG_IEEE80211AH
+CFLAGS += -DCONFIG_IEEE80211AH
+endif
+
+ifdef CONFIG_MORSE_5GHZ_MAPPED
+CFLAGS += -DCONFIG_MORSE_5GHZ_MAPPED
+endif
+
+ifdef CONFIG_DRIVER_NL80211_MORSE
+CFLAGS += -DCONFIG_DRIVER_NL80211_MORSE
 endif
 
 ifdef CONFIG_MESH
@@ -360,7 +398,24 @@ endif
 
 ifdef CONFIG_WNM
 CFLAGS += -DCONFIG_WNM
+CFLAGS += -DCONFIG_MORSE_WNM
 OBJS += wnm_sta.o
+endif
+
+ifdef CONFIG_S1G_TWT
+CFLAGS += -DCONFIG_S1G_TWT
+endif
+
+ifdef CONFIG_MORSE_STANDBY_MODE
+CFLAGS += -DCONFIG_MORSE_STANDBY_MODE
+endif
+
+ifdef CONFIG_MORSE_KEEP_ALIVE_OFFLOAD
+CFLAGS += -DCONFIG_MORSE_KEEP_ALIVE_OFFLOAD
+endif
+
+ifdef CONFIG_MORSE_SET_SCHED_SCAN_DWELL
+CFLAGS += -DCONFIG_MORSE_SET_SCHED_SCAN_DWELL
 endif
 
 ifdef CONFIG_TDLS
@@ -1689,6 +1744,10 @@ endif
 OBJS += ../src/crypto/random.o
 endif
 
+ifdef CONFIG_CTRL_IFACE_AIDL
+CFLAGS += -DCONFIG_AIDL -DCONFIG_CTRL_IFACE_AIDL
+endif
+
 ifdef CONFIG_CTRL_IFACE
 ifeq ($(CONFIG_CTRL_IFACE), y)
 ifdef CONFIG_NATIVE_WINDOWS
@@ -2014,8 +2073,8 @@ wpa_priv: $(BCHECK) $(OBJS_priv)
 
 _OBJS_VAR := OBJS
 include ../src/objs.mk
-wpa_supplicant: $(BCHECK) $(OBJS) $(EXTRA_progs)
-	$(Q)$(LDO) $(LDFLAGS) -o wpa_supplicant $(OBJS) $(LIBS) $(EXTRALIBS)
+wpa_supplicant_s1g: $(BCHECK) $(OBJS) $(EXTRA_progs)
+	$(Q)$(LDO) $(LDFLAGS) -o wpa_supplicant_s1g $(OBJS) $(LIBS) $(EXTRALIBS)
 	@$(E) "  LD " $@
 
 _OBJS_VAR := OBJS_t
@@ -2032,14 +2091,14 @@ preauth_test: $(OBJS_t2)
 
 _OBJS_VAR := OBJS_p
 include ../src/objs.mk
-wpa_passphrase: $(OBJS_p)
-	$(Q)$(LDO) $(LDFLAGS) -o wpa_passphrase $(OBJS_p) $(LIBS_p) $(LIBS)
+wpa_passphrase_s1g: $(OBJS_p)
+	$(Q)$(LDO) $(LDFLAGS) -o wpa_passphrase_s1g $(OBJS_p) $(LIBS_p) $(LIBS)
 	@$(E) "  LD " $@
 
 _OBJS_VAR := OBJS_c
 include ../src/objs.mk
-wpa_cli: $(OBJS_c)
-	$(Q)$(LDO) $(LDFLAGS) -o wpa_cli $(OBJS_c) $(LIBS_c)
+wpa_cli_s1g: $(OBJS_c)
+	$(Q)$(LDO) $(LDFLAGS) -o wpa_cli_s1g $(OBJS_c) $(LIBS_c)
 	@$(E) "  LD " $@
 
 LIBCTRL += ../src/common/wpa_ctrl.o
@@ -2053,23 +2112,23 @@ LIBCTRLSO += ../src/utils/wpa_debug.c
 
 _OBJS_VAR := LIBCTRL
 include ../src/objs.mk
-libwpa_client.a: $(LIBCTRL)
+libwpa_client_s1g.a: $(LIBCTRL)
 	$(Q)rm -f $@
 	$(Q)$(AR) crs $@ $?
 	@$(E) "  AR " $@
 
-libwpa_client.so: $(LIBCTRLSO)
+libwpa_client_s1g.so: $(LIBCTRLSO)
 	@$(E) "  CC  $@ ($^)"
 	$(Q)$(CC) $(LDFLAGS) -o $@ $(CFLAGS) -shared -fPIC $^
 
 OBJS_wpatest := libwpa_test.o
 _OBJS_VAR := OBJS_wpatest
 include ../src/objs.mk
-libwpa_test1: $(OBJS_wpatest) libwpa_client.a
-	$(Q)$(LDO) $(LDFLAGS) -o libwpa_test1 $(OBJS_wpatest) libwpa_client.a $(LIBS_c)
+libwpa_test1: $(OBJS_wpatest) libwpa_client_s1g.a
+	$(Q)$(LDO) $(LDFLAGS) -o libwpa_test1 $(OBJS_wpatest) libwpa_client_s1g.a $(LIBS_c)
 	@$(E) "  LD " $@
 
-libwpa_test2: $(OBJS_wpatest) libwpa_client.so
+libwpa_test2: $(OBJS_wpatest) libwpa_client_s1g.so
 	$(Q)$(LDO) $(LDFLAGS) -o libwpa_test2 $(OBJS_wpatest) -L. -lwpa_client $(LIBS_c)
 	@$(E) "  LD " $@
 
@@ -2146,18 +2205,18 @@ eap_gpsk.so: $(SRC_EAP_GPSK)
 	$(Q)sed -e 's|\@BINDIR\@|$(BINDIR)|g' $< >$@
 	@$(E) "  sed" $<
 
-wpa_supplicant.exe: wpa_supplicant
+wpa_supplicant_s1g.exe: wpa_supplicant_s1g
 	mv -f $< $@
-wpa_cli.exe: wpa_cli
+wpa_cli_s1g.exe: wpa_cli_s1g
 	mv -f $< $@
-wpa_passphrase.exe: wpa_passphrase
+wpa_passphrase_s1g.exe: wpa_passphrase_s1g
 	mv -f $< $@
 win_if_list.exe: win_if_list
 	mv -f $< $@
 eapol_test.exe: eapol_test
 	mv -f $< $@
 
-WINALL=wpa_supplicant.exe wpa_cli.exe wpa_passphrase.exe win_if_list.exe
+WINALL=wpa_supplicant_s1g.exe wpa_cli_s1g.exe wpa_passphrase_s1g.exe win_if_list.exe
 
 windows-bin: $(WINALL)
 	$(STRIP) $(WINALL)
@@ -2345,8 +2404,9 @@ clean: common-clean
 	rm -f nfc_pw_token
 	rm -f lcov.info
 	rm -rf lcov-html
-	rm -f libwpa_client.a
+	rm -f libwpa_client_s1g.a
 	rm -f libpasn.so
-	rm -f libwpa_client.so
+	rm -f libwpa_client_s1g.so
 	rm -f libwpa_test1 libwpa_test2
 	rm -f wpa_passphrase
+	rm -f wpa_passphrase_s1g

@@ -15,14 +15,16 @@
 struct hostapd_channel_data * hw_get_channel_chan(struct hostapd_hw_modes *mode,
 						  int chan, int *freq);
 struct hostapd_channel_data *
-hw_mode_get_channel(struct hostapd_hw_modes *mode, int freq, int *chan);
+hw_mode_get_channel(struct hostapd_hw_modes *mode, int freq,
+		    int freq_offset, int *chan);
 
 struct hostapd_channel_data *
-hw_get_channel_freq(enum hostapd_hw_mode mode, int freq, int *chan,
-		    struct hostapd_hw_modes *hw_features, int num_hw_features);
+hw_get_channel_freq(enum hostapd_hw_mode mode, int freq, int freq_offset,
+		    int *chan, struct hostapd_hw_modes *hw_features,
+		    int num_hw_features);
 
 int hw_get_freq(struct hostapd_hw_modes *mode, int chan);
-int hw_get_chan(enum hostapd_hw_mode mode, int freq,
+int hw_get_chan(enum hostapd_hw_mode mode, int freq, int freq_offset,
 		struct hostapd_hw_modes *hw_features, int num_hw_features);
 
 int allowed_ht40_channel_pair(enum hostapd_hw_mode mode,
@@ -39,7 +41,8 @@ void punct_update_legacy_bw(u16 bitmap, u8 pri_chan,
 			    enum oper_chan_width *width, u8 *seg0, u8 *seg1);
 int hostapd_set_freq_params(struct hostapd_freq_params *data,
 			    enum hostapd_hw_mode mode,
-			    int freq, int channel, int edmg, u8 edmg_channel,
+			    int freq, int freq_offset,
+			    int channel, int edmg, u8 edmg_channel,
 			    int ht_enabled,
 			    int vht_enabled, int he_enabled,
 			    bool eht_enabled, int sec_channel_offset,

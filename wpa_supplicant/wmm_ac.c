@@ -192,7 +192,7 @@ static int wmm_ac_send_addts_request(struct wpa_supplicant *wpa_s,
 	wpabuf_put_u8(buf, 0); /* status code */
 	wpabuf_put_data(buf, &req->tspec, sizeof(req->tspec));
 
-	ret = wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, req->address,
+	ret = wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, 0, req->address,
 				wpa_s->own_addr, wpa_s->bssid,
 				wpabuf_head(buf), wpabuf_len(buf), 0);
 	if (ret) {
@@ -226,7 +226,7 @@ static int wmm_ac_send_delts(struct wpa_supplicant *wpa_s,
 	wpabuf_put_u8(buf, 0); /* Status Code (not used) */
 	wpabuf_put_data(buf, tspec, sizeof(*tspec));
 
-	ret = wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, address,
+	ret = wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, 0, address,
 				  wpa_s->own_addr, wpa_s->bssid,
 				  wpabuf_head(buf), wpabuf_len(buf), 0);
 	if (ret)

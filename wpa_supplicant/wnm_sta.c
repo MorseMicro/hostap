@@ -186,7 +186,7 @@ int ieee802_11_send_wnmsleep_req(struct wpa_supplicant *wpa_s,
 	len = 1 + sizeof(mgmt->u.action.u.wnm_sleep_req) + wnmsleep_ie_len +
 		wnmtfs_ie_len + oci_ie_len;
 
-	res = wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, wpa_s->bssid,
+	res = wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, 0, wpa_s->bssid,
 				  wpa_s->own_addr, wpa_s->bssid,
 				  &mgmt->u.action.category, len, 0);
 	if (res < 0)
@@ -930,6 +930,7 @@ static int wnm_nei_rep_add_bss(struct wpa_supplicant *wpa_s,
 }
 
 
+#ifndef CONFIG_NO_BSS_TRANS_MGMT
 static void wnm_add_cand_list(struct wpa_supplicant *wpa_s, struct wpabuf **buf)
 {
 	unsigned int i, pref = 255;
@@ -1045,7 +1046,7 @@ static int wnm_send_bss_transition_mgmt_resp(
 	}
 #endif /* CONFIG_MBO */
 
-	res = wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, wpa_s->bssid,
+	res = wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, 0, wpa_s->bssid,
 				  wpa_s->own_addr, wpa_s->bssid,
 				  wpabuf_head_u8(buf), wpabuf_len(buf), 0);
 	if (res < 0) {
@@ -1107,10 +1108,12 @@ static void wnm_bss_tm_connect(struct wpa_supplicant *wpa_s,
 	if (!already_connecting && radio_work_pending(wpa_s, "sme-connect"))
 		wpa_s->bss_trans_mgmt_in_progress = true;
 }
+#endif /* CONFIG_NO_BSS_TRANS_MGMT */
 
 
 int wnm_scan_process(struct wpa_supplicant *wpa_s, bool pre_scan_check)
 {
+#ifndef CONFIG_NO_BSS_TRANS_MGMT
 	struct wpa_bss *bss, *current_bss = wpa_s->current_bss;
 	struct wpa_ssid *ssid = wpa_s->current_ssid;
 	enum bss_trans_mgmt_status_code status = WNM_BSS_TM_REJECT_UNSPECIFIED;
@@ -1248,9 +1251,13 @@ send_bss_resp_fail:
 	wnm_btm_reset(wpa_s);
 
 	return 1;
+#else /* CONFIG_NO_BSS_TRANS_MGMT */
+	return 0;
+#endif
 }
 
 
+#ifndef CONFIG_NO_BSS_TRANS_MGMT
 static int cand_pref_compar(const void *a, const void *b)
 {
 	const struct neighbor_report *aa = a;
@@ -1820,13 +1827,14 @@ int wnm_send_bss_transition_mgmt_query(struct wpa_supplicant *wpa_s,
 		wpabuf_put(buf, ret);
 	}
 
-	ret = wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, wpa_s->bssid,
+	ret = wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, 0, wpa_s->bssid,
 				  wpa_s->own_addr, wpa_s->bssid,
 				  wpabuf_head_u8(buf), wpabuf_len(buf), 0);
 
 	wpabuf_free(buf);
 	return ret;
 }
+#endif /* CONFIG_NO_BSS_TRANS_MGMT */
 
 
 static void ieee802_11_rx_wnm_notif_req_wfa(struct wpa_supplicant *wpa_s,
@@ -2032,10 +2040,12 @@ void ieee802_11_rx_wnm_action(struct wpa_supplicant *wpa_s,
 	}
 
 	switch (act) {
+#ifndef CONFIG_NO_BSS_TRANS_MGMT
 	case WNM_BSS_TRANS_MGMT_REQ:
 		ieee802_11_rx_bss_trans_mgmt_req(wpa_s, pos, end,
 						 !(mgmt->da[0] & 0x01));
 		break;
+#endif /* CONFIG_NO_BSS_TRANS_MGMT */
 	case WNM_SLEEP_MODE_RESP:
 		ieee802_11_rx_wnmsleep_resp(wpa_s, pos, end - pos);
 		break;
@@ -2075,7 +2085,7 @@ int wnm_send_coloc_intf_report(struct wpa_supplicant *wpa_s, u8 dialog_token,
 	wpabuf_put_u8(buf, dialog_token);
 	wpabuf_put_buf(buf, elems);
 
-	ret = wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, wpa_s->bssid,
+	ret = wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, 0, wpa_s->bssid,
 				  wpa_s->own_addr, wpa_s->bssid,
 				  wpabuf_head_u8(buf), wpabuf_len(buf), 0);
 	wpabuf_free(buf);

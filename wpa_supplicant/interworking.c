@@ -312,7 +312,7 @@ static int interworking_anqp_send_req(struct wpa_supplicant *wpa_s,
 	if (buf == NULL)
 		return -1;
 
-	res = gas_query_req(wpa_s->gas, bss->bssid, bss->freq, 0, 0, buf,
+	res = gas_query_req(wpa_s->gas, bss->bssid, bss->freq, 0, 0, 0, buf,
 			    interworking_anqp_resp_cb, wpa_s);
 	if (res < 0) {
 		wpa_msg(wpa_s, MSG_DEBUG, "ANQP: Failed to send Query Request");
@@ -2839,7 +2839,7 @@ int anqp_send_req(struct wpa_supplicant *wpa_s, const u8 *dst, int freq,
 	if (buf == NULL)
 		return -1;
 
-	res = gas_query_req(wpa_s->gas, dst, freq, 0, 0, buf, anqp_resp_cb,
+	res = gas_query_req(wpa_s->gas, dst, freq, 0, 0, 0, buf, anqp_resp_cb,
 			    wpa_s);
 	if (res < 0) {
 		wpa_msg(wpa_s, MSG_DEBUG, "ANQP: Failed to send Query Request");
@@ -3165,7 +3165,11 @@ out_parse_done:
 	if (bss)
 		wpas_notify_bss_anqp_changed(wpa_s, bss->id);
 out:
+#ifdef CONFIG_AIDL
+	wpas_notify_anqp_query_done(wpa_s, dst, anqp_result, bss ? bss->anqp : NULL);
+#else
 	wpas_notify_anqp_query_done(wpa_s, dst, anqp_result);
+#endif /* CONFIG_AIDL */
 }
 
 
@@ -3273,7 +3277,7 @@ int gas_send_request(struct wpa_supplicant *wpa_s, const u8 *dst,
 	} else
 		wpabuf_put_le16(buf, 0);
 
-	res = gas_query_req(wpa_s->gas, dst, freq, 0, 0, buf, gas_resp_cb,
+	res = gas_query_req(wpa_s->gas, dst, freq, 0, 0, 0, buf, gas_resp_cb,
 			    wpa_s);
 	if (res < 0) {
 		wpa_msg(wpa_s, MSG_DEBUG, "GAS: Failed to send Query Request");

@@ -5,6 +5,7 @@
  * Copyright (c) 2005-2006, Devicescape Software, Inc.
  * Copyright (c) 2007, Johannes Berg <johannes@sipsolutions.net>
  * Copyright (c) 2009-2010, Atheros Communications
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -144,6 +145,11 @@ struct wpa_driver_nl80211_data {
 	} iface_capa[NL80211_IFTYPE_MAX];
 	unsigned int num_iface_capa;
 	unsigned int unique_drv_id;
+
+#ifdef CONFIG_IEEE80211AH
+	/* Store country code here instead of setting with nl80211. */
+	char alpha2[3];
+#endif
 
 	int has_capability;
 	int has_driver_key_mgmt;
@@ -408,8 +414,10 @@ int android_nl_socket_set_nonblocking(struct nl_sock *handle);
 int android_pno_start(struct i802_bss *bss,
 		      struct wpa_driver_scan_params *params);
 int android_pno_stop(struct i802_bss *bss);
+#ifndef ANDROID_LIB_STUB
 extern int wpa_driver_nl80211_driver_cmd(void *priv, char *cmd, char *buf,
 					 size_t buf_len);
+#endif
 extern int wpa_driver_nl80211_driver_event(struct wpa_driver_nl80211_data *drv,
 					   u32 vendor_id, u32 subcmd,
 					   u8 *data, size_t len);

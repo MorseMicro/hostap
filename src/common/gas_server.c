@@ -39,6 +39,7 @@ struct gas_server_response {
 	u8 frag_id;
 	struct wpabuf *resp;
 	int freq;
+	int freq_offset;
 	u8 dst[ETH_ALEN];
 	u8 dialog_token;
 	struct gas_server_handler *handler;
@@ -49,7 +50,7 @@ struct gas_server_response {
 struct gas_server {
 	struct dl_list handlers; /* struct gas_server_handler::list */
 	struct dl_list responses; /* struct gas_server_response::list */
-	void (*tx)(void *ctx, int freq, const u8 *da, struct wpabuf *resp,
+	void (*tx)(void *ctx, int freq, int freq_offset, const u8 *da, struct wpabuf *resp,
 		   unsigned int wait_time);
 	void *ctx;
 };
@@ -154,7 +155,7 @@ gas_server_send_resp(struct gas_server *gas,
 	response->offset = resp_frag_len;
 	response->resp = query_resp;
 	response->initial_resp_sent = true;
-	gas->tx(gas->ctx, response->freq, response->dst, resp,
+	gas->tx(gas->ctx, response->freq, response->freq_offset, response->dst, resp,
 		comeback_delay ? 2000 : 0);
 	wpabuf_free(resp);
 	eloop_register_timeout(GAS_QUERY_TIMEOUT, 0,
@@ -164,7 +165,7 @@ gas_server_send_resp(struct gas_server *gas,
 
 static int
 gas_server_rx_initial_req(struct gas_server *gas, const u8 *da, const u8 *sa,
-			  const u8 *bssid, int freq, u8 dialog_token,
+			  const u8 *bssid, int freq, int freq_offset, u8 dialog_token,
 			  const u8 *data, size_t len)
 {
 	const u8 *pos, *end, *adv_proto, *query_req;
@@ -233,6 +234,7 @@ gas_server_rx_initial_req(struct gas_server *gas, const u8 *da, const u8 *sa,
 			continue;
 
 		response->freq = freq;
+		response->freq_offset = freq_offset;
 		response->handler = handler;
 		os_memcpy(response->dst, sa, ETH_ALEN);
 		response->dialog_token = dialog_token;
@@ -338,14 +340,14 @@ gas_server_handle_rx_comeback_req(struct gas_server_response *response)
 		wait_time = 2000;
 
 send_resp:
-	gas->tx(gas->ctx, response->freq, response->dst, resp, wait_time);
+	gas->tx(gas->ctx, response->freq, response->freq_offset, response->dst, resp, wait_time);
 	wpabuf_free(resp);
 }
 
 
 static int
 gas_server_rx_comeback_req(struct gas_server *gas, const u8 *da, const u8 *sa,
-			   const u8 *bssid, int freq, u8 dialog_token)
+			   const u8 *bssid, int freq, int freq_offset, u8 dialog_token)
 {
 	struct gas_server_response *response;
 
@@ -378,7 +380,7 @@ gas_server_rx_comeback_req(struct gas_server *gas, const u8 *da, const u8 *sa,
  */
 int gas_server_rx(struct gas_server *gas, const u8 *da, const u8 *sa,
 		  const u8 *bssid, u8 categ, const u8 *data, size_t len,
-		  int freq)
+		  int freq, int freq_offset)
 {
 	u8 action, dialog_token;
 	const u8 *pos, *end;
@@ -407,10 +409,10 @@ int gas_server_rx(struct gas_server *gas, const u8 *da, const u8 *sa,
 
 	if (action == WLAN_PA_GAS_INITIAL_REQ)
 		return gas_server_rx_initial_req(gas, da, sa, bssid,
-						 freq, dialog_token,
+						 freq, freq_offset, dialog_token,
 						 pos, end - pos);
 	return gas_server_rx_comeback_req(gas, da, sa, bssid,
-					  freq, dialog_token);
+					  freq, freq_offset, dialog_token);
 }
 
 
@@ -548,7 +550,7 @@ bool gas_server_response_sent(struct gas_server *gas, void *resp_ctx)
 
 
 struct gas_server * gas_server_init(void *ctx,
-				    void (*tx)(void *ctx, int freq,
+				    void (*tx)(void *ctx, int freq, int freq_offset,
 					       const u8 *da,
 					       struct wpabuf *buf,
 					       unsigned int wait_time))

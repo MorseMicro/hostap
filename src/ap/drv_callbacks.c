@@ -1,6 +1,7 @@
 /*
  * hostapd / Callback functions for driver wrappers
  * Copyright (c) 2002-2013, Jouni Malinen <j@w1.fi>
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -8,6 +9,7 @@
 
 #include "utils/includes.h"
 
+#include "utils/morse.h"
 #include "utils/common.h"
 #include "utils/eloop.h"
 #include "radius/radius.h"
@@ -1267,7 +1269,7 @@ void hostapd_event_ch_switch(struct hostapd_data *hapd, int freq, int ht,
 	is_dfs0 = hostapd_is_dfs_required(hapd->iface);
 	hapd->iface->freq = freq;
 
-	channel = hostapd_hw_get_channel(hapd, freq);
+	channel = hostapd_hw_get_channel(hapd, freq, 0);
 	if (!channel) {
 		hostapd_logger(hapd, NULL, HOSTAPD_MODULE_IEEE80211,
 			       HOSTAPD_LEVEL_WARNING,
@@ -1415,6 +1417,17 @@ void hostapd_event_ch_switch(struct hostapd_data *hapd, int freq, int ht,
 	    freq == hapd->cs_freq_params.freq) {
 		hostapd_cleanup_cs_params(hapd);
 		ieee802_11_set_beacon(hapd);
+#ifdef CONFIG_IEEE80211AH
+		/* Update S1G parameters in hostapd conf */
+		if ((hapd->cs_s1g_freq_params.s1g_oper_freq > MIN_S1G_FREQ_KHZ) &&
+			(hapd->cs_s1g_freq_params.s1g_oper_freq < MAX_S1G_FREQ_KHZ)) {
+			hapd->iconf->s1g_prim_1mhz_chan_index = hapd->cs_s1g_freq_params.s1g_prim_channel_index_1MHz;
+			hapd->iconf->s1g_op_class = hapd->cs_s1g_freq_params.s1g_global_op_class;
+			hapd->iconf->s1g_prim_chwidth = hapd->cs_s1g_freq_params.s1g_prim_bw - 1;
+			wpa_msg(hapd->msg_ctx, MSG_INFO, AP_CSA_FINISHED
+				"s1g_freq=%d dfs=%d", hapd->cs_s1g_freq_params.s1g_oper_freq, is_dfs);
+		}
+#endif
 
 		wpa_msg(hapd->msg_ctx, MSG_INFO, AP_CSA_FINISHED
 			"freq=%d dfs=%d", freq, is_dfs);
@@ -1520,7 +1533,7 @@ void hostapd_acs_channel_selected(struct hostapd_data *hapd,
 			if (mode->mode == acs_res->hw_mode) {
 				if (hapd->iface->freq > 0 &&
 				    !hw_get_chan(mode->mode,
-						 hapd->iface->freq,
+						 hapd->iface->freq, 0,
 						 hapd->iface->hw_features,
 						 hapd->iface->num_hw_features))
 					continue;
@@ -1545,7 +1558,7 @@ void hostapd_acs_channel_selected(struct hostapd_data *hapd,
 		goto out;
 	}
 	pri_chan = hw_get_channel_freq(hapd->iface->current_mode->mode,
-				       acs_res->pri_freq, NULL,
+				       acs_res->pri_freq, 0, NULL,
 				       hapd->iface->hw_features,
 				       hapd->iface->num_hw_features);
 	if (!pri_chan) {
@@ -2491,6 +2504,9 @@ static void hostapd_event_color_change(struct hostapd_data *hapd, bool success)
 static void hostapd_iface_enable(struct hostapd_data *hapd)
 {
 	wpa_msg(hapd->msg_ctx, MSG_INFO, INTERFACE_ENABLED);
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+	morse_set_interface(hapd->iface);
+#endif
 	if (hapd->disabled && hapd->started) {
 		hapd->disabled = 0;
 		/*

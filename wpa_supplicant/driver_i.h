@@ -334,12 +334,13 @@ static inline int wpa_drv_set_country(struct wpa_supplicant *wpa_s,
 
 static inline int wpa_drv_send_mlme(struct wpa_supplicant *wpa_s,
 				    const u8 *data, size_t data_len, int noack,
-				    unsigned int freq, unsigned int wait)
+				    unsigned int freq, unsigned int freq_offset,
+				    unsigned int wait)
 {
 	if (wpa_s->driver->send_mlme)
-		return wpa_s->driver->send_mlme(wpa_s->drv_priv,
-						data, data_len, noack,
-						freq, NULL, 0, 0, wait, -1);
+		return wpa_s->driver->send_mlme(wpa_s->drv_priv, data, data_len,
+						noack, freq, freq_offset, NULL,
+						0, 0, wait, -1);
 	return -1;
 }
 
@@ -417,7 +418,7 @@ static inline int wpa_drv_set_supp_port(struct wpa_supplicant *wpa_s,
 	return 0;
 }
 
-int wpa_drv_send_action(struct wpa_supplicant *wpa_s, unsigned int freq,
+int wpa_drv_send_action(struct wpa_supplicant *wpa_s, unsigned int freq, unsigned int freq_offset,
 			unsigned int wait, const u8 *dst, const u8 *src,
 			const u8 *bssid, const u8 *data, size_t data_len,
 			int no_cck);
@@ -460,10 +461,11 @@ static inline int wpa_drv_if_remove(struct wpa_supplicant *wpa_s,
 
 static inline int wpa_drv_remain_on_channel(struct wpa_supplicant *wpa_s,
 					    unsigned int freq,
+					    unsigned int freq_offset,
 					    unsigned int duration)
 {
 	if (wpa_s->driver->remain_on_channel)
-		return wpa_s->driver->remain_on_channel(wpa_s->drv_priv, freq,
+		return wpa_s->driver->remain_on_channel(wpa_s->drv_priv, freq, freq_offset,
 							duration);
 	return -1;
 }

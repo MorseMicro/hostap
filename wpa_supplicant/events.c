@@ -1,6 +1,7 @@
 /*
  * WPA Supplicant - Driver event processing
  * Copyright (c) 2003-2019, Jouni Malinen <j@w1.fi>
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -54,6 +55,7 @@
 #include "nan_usd.h"
 #include "dpp_supplicant.h"
 #include "pr_supplicant.h"
+#include "morse.h"
 
 
 #define MAX_OWE_TRANSITION_BSS_SELECT_COUNT 5
@@ -1178,6 +1180,7 @@ static void owe_trans_ssid(struct wpa_supplicant *wpa_s, struct wpa_bss *bss,
 
 static bool wpas_valid_ml_bss(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 {
+#ifdef CONFIG_IEEE80211BE
 	u16 removed_links;
 
 	if (!bss->valid_links)
@@ -1188,6 +1191,7 @@ static bool wpas_valid_ml_bss(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 	if (BIT(bss->mld_link_id) & removed_links)
 		return false;
 
+#endif /* CONFIG_IEEE80211BE */
 	return true;
 }
 
@@ -1430,6 +1434,20 @@ static bool wpa_scan_res_ok(struct wpa_supplicant *wpa_s, struct wpa_ssid *ssid,
 		return false;
 	}
 
+#ifdef CONFIG_IEEE80211AH
+	ie = wpa_bss_get_ie(bss, WLAN_EID_S1G_MAX_AWAY_DURATION);
+	if (ie) {
+		u16 bss_mad = WPA_GET_LE16(&ie[2]);
+
+		if (ssid->max_away_duration < bss_mad) {
+			if (debug_print)
+				wpa_dbg(wpa_s, MSG_DEBUG,
+					"   skip - MAD too great %d", bss_mad);
+			return false;
+		}
+	}
+#endif /* CONFIG_IEEE80211AH */
+
 #ifdef CONFIG_SAE
 	/* When using SAE Password Identifier and when operationg on the 6 GHz
 	 * band, only H2E is allowed. */
@@ -1625,6 +1643,9 @@ struct wpa_ssid * wpa_scan_res_match(struct wpa_supplicant *wpa_s,
 	const u8 *match_ssid;
 	size_t match_ssid_len;
 	int bssid_ignore_count;
+#ifdef CONFIG_IEEE80211AH
+	char *country = wpa_s->conf ? wpa_s->conf->country : NULL;
+#endif
 
 	ie = wpa_bss_get_vendor_ie(bss, WPA_IE_VENDOR_TYPE);
 	wpa_ie_len = ie ? ie[1] : 0;
@@ -1633,17 +1654,31 @@ struct wpa_ssid * wpa_scan_res_match(struct wpa_supplicant *wpa_s,
 	rsn_ie_len = ie ? ie[1] : 0;
 
 	if (debug_print) {
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
 		wpa_dbg(wpa_s, MSG_DEBUG, "%d: " MACSTR
-			" ssid='%s' wpa_ie_len=%u rsn_ie_len=%u caps=0x%x level=%d freq=%d %s%s",
+			" ssid='%s' wpa_ie_len=%u rsn_ie_len=%u caps=0x%x level=%d chan=%d %s%s",
 			i, MAC2STR(bss->bssid),
 			wpa_ssid_txt(bss->ssid, bss->ssid_len),
 			wpa_ie_len, rsn_ie_len, bss->caps, bss->level,
-			bss->freq,
+			morse_ht_freq_to_s1g_chan(bss->freq, country),
 			wpa_bss_get_vendor_ie(bss, WPS_IE_VENDOR_TYPE) ?
 			" wps" : "",
 			(wpa_bss_get_vendor_ie(bss, P2P_IE_VENDOR_TYPE) ||
 			 wpa_bss_get_vendor_ie_beacon(bss, P2P_IE_VENDOR_TYPE))
 			? " p2p" : "");
+#else
+		wpa_dbg(wpa_s, MSG_DEBUG, "%d: " MACSTR
+			" ssid='%s' wpa_ie_len=%u rsn_ie_len=%u caps=0x%x level=%d freq=%d freq_offset=%d %s%s",
+			i, MAC2STR(bss->bssid),
+			wpa_ssid_txt(bss->ssid, bss->ssid_len),
+			wpa_ie_len, rsn_ie_len, bss->caps, bss->level,
+			bss->freq, bss->freq_offset,
+			wpa_bss_get_vendor_ie(bss, WPS_IE_VENDOR_TYPE) ?
+			" wps" : "",
+			(wpa_bss_get_vendor_ie(bss, P2P_IE_VENDOR_TYPE) ||
+			 wpa_bss_get_vendor_ie_beacon(bss, P2P_IE_VENDOR_TYPE))
+			? " p2p" : "");
+#endif
 	}
 
 	bssid_ignore_count = wpa_bssid_ignore_is_listed(wpa_s, bss->bssid);
@@ -1866,6 +1901,7 @@ static void wpa_supplicant_req_new_scan(struct wpa_supplicant *wpa_s,
 }
 
 
+#ifdef CONFIG_IEEE80211BE
 static bool ml_link_probe_scan(struct wpa_supplicant *wpa_s)
 {
 	if (!wpa_s->ml_connect_probe_ssid || !wpa_s->ml_connect_probe_bss)
@@ -1969,6 +2005,7 @@ static int wpa_supplicant_connect_ml_missing(struct wpa_supplicant *wpa_s,
 
 	return 1;
 }
+#endif /* CONFIG_IEEE80211BE */
 
 
 int wpa_supplicant_connect(struct wpa_supplicant *wpa_s,
@@ -2027,8 +2064,10 @@ int wpa_supplicant_connect(struct wpa_supplicant *wpa_s,
 			return 0;
 		}
 
+#ifdef CONFIG_IEEE80211BE
 		if (wpa_supplicant_connect_ml_missing(wpa_s, selected, ssid))
 			return 0;
+#endif /* CONFIG_IEEE80211BE */
 
 		wpa_msg(wpa_s, MSG_DEBUG, "Request association with " MACSTR,
 			MAC2STR(selected->bssid));
@@ -2614,8 +2653,10 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 		goto scan_work_done;
 #endif /* CONFIG_NO_RRM */
 
+#ifdef CONFIG_IEEE80211BE
 	if (ml_link_probe_scan(wpa_s))
 		goto scan_work_done;
+#endif /* CONFIG_IEEE80211BE */
 
 	if ((wpa_s->conf->ap_scan == 2 && !wpas_wps_searching(wpa_s)))
 		goto scan_work_done;
@@ -3031,6 +3072,30 @@ static void wnm_process_assoc_resp(struct wpa_supplicant *wpa_s,
 			   " (protected keep-live required)" : "");
 		if (wpa_s->sme.bss_max_idle_period == 0)
 			wpa_s->sme.bss_max_idle_period = 1;
+
+#if defined(CONFIG_MORSE_KEEP_ALIVE_OFFLOAD) && defined(CONFIG_DRIVER_NL80211_MORSE)
+		if (wpa_s->conf->vendor_keep_alive_offload) {
+			if (!wpa_s->driver->set_keep_alive)
+				wpa_printf(MSG_ERROR,
+					"Driver interface not defined for set_keep_alive");
+			else if (wpa_s->driver->set_keep_alive(wpa_s->drv_priv,
+				 wpa_s->sme.bss_max_idle_period, false) == 0) {
+				wpa_s->no_keep_alive = 1;
+				wpa_printf(MSG_DEBUG,
+					     "morse: Keep-alive offload to firmware enabled (%s)",
+					     wpa_s->ifname);
+			}
+		}
+
+		if (wpa_s->no_keep_alive) {
+			/* Nothing else to do, do not start timer */
+			return;
+		} else {
+			wpa_printf(MSG_DEBUG, "morse: Keep-alive offload to firmware disabled (%s)",
+				wpa_s->ifname);
+		}
+#endif /* CONFIG_MORSE_KEEP_ALIVE_OFFLOAD && CONFIG_DRIVER_NL80211_MORSE*/
+
 		if (wpa_s->drv_flags & WPA_DRIVER_FLAGS_SME) {
 			eloop_cancel_timeout(wnm_bss_keep_alive, wpa_s, NULL);
 			 /* msec times 1000 */
@@ -3455,6 +3520,9 @@ static int wpa_supplicant_event_associnfo(struct wpa_supplicant *wpa_s,
 	u8 bssid[ETH_ALEN];
 	bool bssid_known;
 	enum wpa_rsn_override rsn_override;
+#ifdef CONFIG_IEEE80211AH
+	char *country = wpa_s->conf ? wpa_s->conf->country : NULL;
+#endif
 
 	wpa_dbg(wpa_s, MSG_DEBUG, "Association info event");
 	wpa_s->ssid_verified = false;
@@ -3496,9 +3564,16 @@ static int wpa_supplicant_event_associnfo(struct wpa_supplicant *wpa_s,
 		wpa_hexdump(MSG_DEBUG, "beacon_ies",
 			    data->assoc_info.beacon_ies,
 			    data->assoc_info.beacon_ies_len);
-	if (data->assoc_info.freq)
-		wpa_dbg(wpa_s, MSG_DEBUG, "freq=%u MHz",
+	if (data->assoc_info.freq) {
+		wpa_dbg(wpa_s, MSG_DEBUG,
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+			"chan=%d",
+			morse_ht_freq_to_s1g_chan(data->assoc_info.freq, country));
+#else
+			"freq=%u MHz",
 			data->assoc_info.freq);
+#endif /* CONFIG_MORSE_5GHZ_MAPPED */
+	}
 
 	wpa_s->connection_set = 0;
 	if (data->assoc_info.req_ies && data->assoc_info.resp_ies) {
@@ -3525,6 +3600,9 @@ static int wpa_supplicant_event_associnfo(struct wpa_supplicant *wpa_s,
 				resp_elems.he_capabilities;
 			wpa_s->connection_eht = req_elems.eht_capabilities &&
 				resp_elems.eht_capabilities;
+
+			if (resp_elems.aid)
+				wpa_sm_set_assoc_aid(wpa_s->wpa, WPA_GET_LE16(resp_elems.aid));
 			if (req_elems.rrm_enabled)
 				wpa_s->rrm.rrm_used = 1;
 		}
@@ -5154,8 +5232,10 @@ static void ft_rx_action(struct wpa_supplicant *wpa_s, const u8 *data,
 	{
 		struct wpa_bss *bss;
 		bss = wpa_bss_get_bssid(wpa_s, target_ap_addr);
-		if (bss)
+		if (bss) {
 			wpa_s->sme.freq = bss->freq;
+			wpa_s->sme.freq_offset = bss->freq_offset;
+		}
 		wpa_s->sme.auth_alg = WPA_AUTH_ALG_FT;
 		sme_associate(wpa_s, WPAS_MODE_INFRA, target_ap_addr,
 			      WLAN_AUTH_FT);
@@ -5412,6 +5492,11 @@ void wpa_supplicant_update_channel_list(struct wpa_supplicant *wpa_s,
 
 		wpa_printf(MSG_DEBUG, "%s: Updating hw mode",
 			   ifs->ifname);
+#ifdef CONFIG_IEEE80211AH
+		if (info && (info->initiator == REGDOM_SET_BY_DRIVER ||
+			     info->initiator == REGDOM_SET_BY_USER))
+			morse_sta_configure_channelization(wpa_s, info->alpha2);
+#endif /* CONFIG_IEEE80211AH */
 		free_hw_features(ifs);
 		ifs->hw.modes = wpa_drv_get_hw_feature_data(
 			ifs, &ifs->hw.num_modes, &ifs->hw.flags, &dfs_domain);
@@ -5441,7 +5526,7 @@ void wpa_supplicant_update_channel_list(struct wpa_supplicant *wpa_s,
 
 static void wpas_event_rx_mgmt_action(struct wpa_supplicant *wpa_s,
 				      const u8 *frame, size_t len, int freq,
-				      int rssi)
+				      int freq_offset, int rssi)
 {
 	const struct ieee80211_mgmt *mgmt;
 	const u8 *payload;
@@ -5457,8 +5542,8 @@ static void wpas_event_rx_mgmt_action(struct wpa_supplicant *wpa_s,
 	plen = len - IEEE80211_HDRLEN - 1;
 
 	wpa_dbg(wpa_s, MSG_DEBUG, "Received Action frame: SA=" MACSTR
-		" Category=%u DataLen=%d freq=%d MHz",
-		MAC2STR(mgmt->sa), category, (int) plen, freq);
+		" Category=%u DataLen=%d freq=%d.%03d MHz",
+		MAC2STR(mgmt->sa), category, (int) plen, freq, freq_offset);
 
 #ifndef CONFIG_NO_WMM_AC
 	if (category == WLAN_ACTION_WMM) {
@@ -5502,7 +5587,7 @@ static void wpas_event_rx_mgmt_action(struct wpa_supplicant *wpa_s,
 	     mgmt->u.action.category == WLAN_ACTION_PROTECTED_DUAL) &&
 	    gas_server_rx(wpa_s->gas_server, mgmt->da, mgmt->sa, mgmt->bssid,
 			  mgmt->u.action.category,
-			  payload, plen, freq) == 0)
+			  payload, plen, freq, freq_offset) == 0)
 		return;
 #endif /* CONFIG_GAS_SERVER */
 
@@ -5588,7 +5673,8 @@ static void wpas_event_rx_mgmt_action(struct wpa_supplicant *wpa_s,
 	    payload[4] == DPP_OUI_TYPE) {
 		payload++;
 		plen--;
-		wpas_dpp_rx_action(wpa_s, mgmt->sa, payload, plen, freq);
+		wpas_dpp_rx_action(wpa_s, mgmt->sa, payload, plen, freq,
+				   freq_offset);
 		return;
 	}
 #endif /* CONFIG_DPP */
@@ -5607,14 +5693,17 @@ static void wpas_event_rx_mgmt_action(struct wpa_supplicant *wpa_s,
 						  payload + 1, plen - 1);
 		return;
 	}
+#endif /* CONFIG_NO_ROBUST_AV */
 
+	/* QoS managment frames not supported by MM_IOT to reduce code size. */
+#ifndef MM_IOT
 	if (category == WLAN_ACTION_VENDOR_SPECIFIC_PROTECTED && plen > 4 &&
 	    WPA_GET_BE32(payload) == QM_ACTION_VENDOR_TYPE) {
 		wpas_handle_qos_mgmt_recv_action(wpa_s, mgmt->sa,
 						 payload + 4, plen - 4);
 		return;
 	}
-#endif /* CONFIG_NO_ROBUST_AV */
+#endif
 
 	wpas_p2p_rx_action(wpa_s, mgmt->da, mgmt->sa, mgmt->bssid,
 			   category, payload, plen, freq);
@@ -5622,6 +5711,28 @@ static void wpas_event_rx_mgmt_action(struct wpa_supplicant *wpa_s,
 		mesh_mpm_action_rx(wpa_s, mgmt, len);
 }
 
+#if defined(CONFIG_MESH) && defined(CONFIG_IEEE80211AH)
+void wpa_supplicant_mesh_peer_event(void *ctx, u8 *peer_addr)
+{
+	struct wpa_supplicant *wpa_s = ctx;
+	struct wpa_ssid *ssid = wpa_s->current_ssid;
+	struct hostapd_data *hapd = wpa_s->ifmsh->bss[0];
+
+	if (!hapd) {
+		wpa_printf(MSG_ERROR, "%s: hostap data is NULL\n", __func__);
+		return;
+	}
+
+	if (!ssid)
+		return;
+
+	/* Store the address */
+	memcpy(hapd->mesh_kickout_peer_addr, peer_addr, ETH_ALEN);
+	wpa_printf(MSG_INFO, "Kick out peer addr" MACSTR "\n",
+		MAC2STR(hapd->mesh_kickout_peer_addr));
+	mesh_mpm_kickout_peer(wpa_s);
+}
+#endif /* CONFIG_MESH && CONFIG_IEEE80211AH */
 
 static void wpa_supplicant_notify_avoid_freq(struct wpa_supplicant *wpa_s,
 					     union wpa_event_data *event)
@@ -6036,7 +6147,8 @@ static void wpas_event_unprot_beacon(struct wpa_supplicant *wpa_s,
 	wpabuf_put_u8(buf, 1); /* Dialog Token */
 	wpabuf_put_u8(buf, WNM_NOTIF_TYPE_BEACON_PROTECTION_FAILURE);
 
-	res = wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, wpa_s->bssid,
+	res = wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, wpa_s->assoc_freq_offset,
+				  0, wpa_s->bssid,
 				  wpa_s->own_addr, wpa_s->bssid,
 				  wpabuf_head(buf), wpabuf_len(buf), 0);
 	if (res < 0)
@@ -6477,13 +6589,13 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 			" type=%d stype=%d",
 			MAC2STR(data->tx_status.dst),
 			data->tx_status.type, data->tx_status.stype);
-#ifdef CONFIG_WNM
+#if defined(CONFIG_WNM) && !defined(CONFIG_NO_BSS_TRANS_MGMT)
 		if (data->tx_status.type == WLAN_FC_TYPE_MGMT &&
 		    data->tx_status.stype == WLAN_FC_STYPE_ACTION &&
 		    wnm_btm_resp_tx_status(wpa_s, data->tx_status.data,
 					   data->tx_status.data_len) == 0)
 			break;
-#endif /* CONFIG_WNM */
+#endif /* CONFIG_WNM && !CONFIG_NO_BSS_TRANS_MGMT */
 #ifdef CONFIG_PASN
 #ifdef CONFIG_P2P
 		if (data->tx_status.type == WLAN_FC_TYPE_MGMT &&
@@ -6628,10 +6740,12 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 			break;
 
 		wpa_msg(wpa_s, MSG_INFO,
-			"%sfreq=%d ht_enabled=%d ch_offset=%d ch_width=%s cf1=%d cf2=%d",
+			"%sfreq=%d freq_offset=%d ht_enabled=%d ch_offset=%d ch_width=%s"
+			" cf1=%d cf2=%d",
 			event == EVENT_CH_SWITCH ? WPA_EVENT_CHANNEL_SWITCH :
 			WPA_EVENT_CHANNEL_SWITCH_STARTED,
 			data->ch_switch.freq,
+			data->ch_switch.freq_offset,
 			data->ch_switch.ht_enabled,
 			data->ch_switch.ch_offset,
 			channel_width_to_string(data->ch_switch.ch_width),
@@ -6641,10 +6755,12 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 			break;
 
 		wpa_s->assoc_freq = data->ch_switch.freq;
+		wpa_s->assoc_freq_offset = data->ch_switch.freq_offset;
 		wpa_s->current_ssid->frequency = data->ch_switch.freq;
 		if (wpa_s->current_bss &&
 		    wpa_s->current_bss->freq != data->ch_switch.freq) {
 			wpa_s->current_bss->freq = data->ch_switch.freq;
+			wpa_s->current_bss->freq_offset = data->ch_switch.freq_offset;
 			notify_bss_changes(wpa_s, WPA_BSS_FREQ_CHANGED_FLAG,
 					   wpa_s->current_bss);
 		}
@@ -6774,6 +6890,7 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 					wpa_s, data->rx_mgmt.frame,
 					data->rx_mgmt.frame_len,
 					data->rx_mgmt.freq,
+					data->rx_mgmt.freq_offset,
 					data->rx_mgmt.ssi_signal);
 				break;
 			}
@@ -6850,6 +6967,7 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 #ifdef CONFIG_OFFCHANNEL
 		offchannel_remain_on_channel_cb(
 			wpa_s, data->remain_on_channel.freq,
+			data->remain_on_channel.freq_offset,
 			data->remain_on_channel.duration);
 #endif /* CONFIG_OFFCHANNEL */
 		wpas_p2p_remain_on_channel_cb(
@@ -6858,6 +6976,7 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 #ifdef CONFIG_DPP
 		wpas_dpp_remain_on_channel_cb(
 			wpa_s, data->remain_on_channel.freq,
+			data->remain_on_channel.freq_offset,
 			data->remain_on_channel.duration);
 #endif /* CONFIG_DPP */
 #ifdef CONFIG_NAN_USD
@@ -6869,7 +6988,8 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 	case EVENT_CANCEL_REMAIN_ON_CHANNEL:
 #ifdef CONFIG_OFFCHANNEL
 		offchannel_cancel_remain_on_channel_cb(
-			wpa_s, data->remain_on_channel.freq);
+			wpa_s, data->remain_on_channel.freq,
+			data->remain_on_channel.freq_offset);
 #endif /* CONFIG_OFFCHANNEL */
 		wpas_p2p_cancel_remain_on_channel_cb(
 			wpa_s, data->remain_on_channel.freq);
@@ -7088,7 +7208,8 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 		 * either if timed out or PNO schedule scan is pending.
 		 */
 		if (wpa_s->sched_scan_timed_out) {
-			wpa_supplicant_req_sched_scan(wpa_s);
+			if (wpa_supplicant_req_sched_scan(wpa_s))
+				wpa_supplicant_req_scan(wpa_s, 1, 0);
 		} else if (wpa_s->pno_sched_pending) {
 			wpa_s->pno_sched_pending = 0;
 			wpas_start_pno(wpa_s);

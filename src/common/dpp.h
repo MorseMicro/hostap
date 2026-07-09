@@ -3,6 +3,7 @@
  * Copyright (c) 2017, Qualcomm Atheros, Inc.
  * Copyright (c) 2018-2020, The Linux Foundation
  * Copyright (c) 2021-2022, Qualcomm Innovation Center, Inc.
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -11,7 +12,7 @@
 #ifndef DPP_H
 #define DPP_H
 
-#ifdef CONFIG_DPP
+#if defined(CONFIG_DPP) || defined(MM_IOT_DPP_HEADER)
 #include "utils/list.h"
 #include "common/wpa_common.h"
 #include "crypto/sha256.h"
@@ -175,6 +176,7 @@ struct dpp_bootstrap_info {
 	unsigned int port;
 	char *pk;
 	unsigned int freq[DPP_BOOTSTRAP_MAX_FREQ];
+	unsigned int freq_offset[DPP_BOOTSTRAP_MAX_FREQ];
 	unsigned int num_freq;
 	bool channels_listed;
 	u8 version;
@@ -223,10 +225,13 @@ struct dpp_pkex {
 	struct crypto_ec_key *peer_bootstrap_key;
 	struct wpabuf *exchange_req;
 	struct wpabuf *exchange_resp;
+	struct wpabuf *commit_reveal_req;
 	unsigned int t; /* number of failures on code use */
 	unsigned int exch_req_wait_time;
 	unsigned int exch_req_tries;
+	unsigned int commit_reveal_tries;
 	unsigned int freq;
+	unsigned int freq_offset;
 	u8 peer_version;
 	struct wpabuf *enc_key;
 };
@@ -319,7 +324,9 @@ struct dpp_authentication {
 	unsigned int freq[DPP_BOOTSTRAP_MAX_FREQ];
 	unsigned int num_freq, freq_idx;
 	unsigned int curr_freq;
+	unsigned int curr_freq_offset;
 	unsigned int neg_freq;
+	unsigned int neg_freq_offset;
 	unsigned int num_freq_iters;
 	size_t secret_len;
 	u8 Mx[DPP_MAX_SHARED_SECRET_LEN];
@@ -337,6 +344,7 @@ struct dpp_authentication {
 	int waiting_auth_conf;
 	int auth_req_ack;
 	unsigned int auth_resp_tries;
+	unsigned int conf_req_tries;
 	u8 allowed_roles;
 	int configurator;
 	int remove_on_tx_status;
@@ -604,7 +612,7 @@ struct dpp_authentication *
 dpp_auth_req_rx(struct dpp_global *dpp, void *msg_ctx, u8 dpp_allowed_roles,
 			int qr_mutual, struct dpp_bootstrap_info *peer_bi,
 		struct dpp_bootstrap_info *own_bi,
-		unsigned int freq, const u8 *hdr, const u8 *attr_start,
+		unsigned int freq, unsigned int freq_offset, const u8 *hdr, const u8 *attr_start,
 		size_t attr_len);
 struct wpabuf *
 dpp_auth_resp_rx(struct dpp_authentication *auth, const u8 *hdr,
@@ -667,6 +675,7 @@ int dpp_check_attrs(const u8 *buf, size_t len);
 int dpp_key_expired(const char *timestamp, os_time_t *expiry);
 const char * dpp_akm_str(enum dpp_akm akm);
 const char * dpp_akm_selector_str(enum dpp_akm akm);
+int dpp_akm_from_hapd_wpa_key(int wpa_key_mgmt);
 int dpp_configurator_get_key(const struct dpp_configurator *conf, char *buf,
 			     size_t buflen);
 void dpp_configurator_free(struct dpp_configurator *conf);
@@ -684,6 +693,7 @@ struct dpp_pkex * dpp_pkex_init(void *msg_ctx, struct dpp_bootstrap_info *bi,
 				const u8 *own_mac,
 				const char *identifier, const char *code,
 				size_t code_len, bool v2);
+bool dpp_pkex_invalid_key_attr_len(u16 len);
 struct dpp_pkex * dpp_pkex_rx_exchange_req(void *msg_ctx,
 					   struct dpp_bootstrap_info *bi,
 					   const u8 *own_mac,
@@ -735,7 +745,7 @@ dpp_bootstrap_get_id(struct dpp_global *dpp, unsigned int id);
 int dpp_bootstrap_remove(struct dpp_global *dpp, const char *id);
 struct dpp_bootstrap_info *
 dpp_pkex_finish(struct dpp_global *dpp, struct dpp_pkex *pkex, const u8 *peer,
-		unsigned int freq);
+		unsigned int freq, unsigned int freq_offset);
 const char * dpp_bootstrap_get_uri(struct dpp_global *dpp, unsigned int id);
 int dpp_bootstrap_info(struct dpp_global *dpp, int id,
 		       char *reply, int reply_size);
@@ -847,7 +857,7 @@ dpp_reconfig_auth_req_rx(struct dpp_global *dpp, void *msg_ctx,
 			 const char *own_connector,
 			 const u8 *net_access_key, size_t net_access_key_len,
 			 const u8 *csign_key, size_t csign_key_len,
-			 unsigned int freq, const u8 *hdr,
+			 unsigned int freq, unsigned int freq_offset, const u8 *hdr,
 			 const u8 *attr_start, size_t attr_len);
 struct wpabuf *
 dpp_reconfig_auth_resp_rx(struct dpp_authentication *auth, const u8 *hdr,
@@ -863,5 +873,66 @@ int dpp_update_reconfig_id(struct dpp_reconfig_id *id);
 void dpp_free_reconfig_id(struct dpp_reconfig_id *id);
 int dpp_get_pubkey_hash(struct crypto_ec_key *key, u8 *hash);
 
-#endif /* CONFIG_DPP */
+/* --------------------------------------------------------------------------------------------- */
+/* This is intended to be a lighter weight way to get feedback on DPP events from hostap. */
+
+/**
+ * enum morse_dpp_event_type - Type of DPP event.
+ * @MORSE_DPP_EVT_PB_RESULT: Equivalent to %DPP_EVENT_PB_RESULT.
+ */
+enum morse_dpp_event_type {
+	MORSE_DPP_EVT_PB_RESULT,
+};
+
+/**
+ * enum morse_dpp_pb_result - DPP push button results reported using the
+ * %DPP_EVENT_PB_RESULT hostap event.
+ */
+enum morse_dpp_pb_result {
+	MORSE_DPP_PB_RESULT_SUCCESS,
+	MORSE_DPP_PB_RESULT_FAILED,
+	MORSE_DPP_PB_RESULT_SESSION_OVERLAP,
+	MORSE_DPP_PB_RESULT_NO_CONFIG,
+	MORSE_DPP_PB_RESULT_COULD_NOT_CONNECT,
+};
+
+/**
+ * enum morse_dpp_event - Value associated with a DPP event.
+ * @args.pb_result: DPP push button result for %MORSE_DPP_EVT_PB_RESULT.
+ * @args.pb_result.result: Equivalent to the strings reported using %DPP_EVENT_PB_RESULT.
+ * @args.pb_result.conf_obj: DPP configuration result on success.
+ *                           May be %NULL if no conf_obj was available.
+ */
+struct morse_dpp_event {
+	enum morse_dpp_event_type type;
+	union {
+		struct {
+			enum morse_dpp_pb_result result;
+			const struct dpp_config_obj *conf_obj;
+		} pb_result;
+	} args;
+};
+
+#ifdef MM_IOT_DPP_EVENTS
+#define MORSE_DPP_EVT_ARGS(_type, _args_type, ...) ((struct morse_dpp_event) { \
+	.type = (_type),                                                       \
+	.args = { ._args_type = { __VA_ARGS__ }},                              \
+})
+
+#define MORSE_DPP_EVT_CALL(_type, _field, ...)                             \
+	morse_dpp_event(__func__, __LINE__,                                \
+			&(MORSE_DPP_EVT_ARGS(_type, _field, __VA_ARGS__)))
+
+/**
+ * morse_dpp_event() - Emit DPP event from hostap.
+ * @func: Name of the function where the event was triggered. Used for debugging.
+ * @line: Line nubmer where the event was triggered. Used for debugging.
+ * @evt: DPP event that occured. This is only valid for the lifetime of this function.
+ */
+void morse_dpp_event(const char *func, int line, const struct morse_dpp_event *evt);
+#else
+#define MORSE_DPP_EVT_CALL(_type, _field, ...)	((void)0)
+#endif /* MM_IOT_DPP_EVENTS */
+
+#endif /* CONFIG_DPP || MM_IOT_DPP_HEADER */
 #endif /* DPP_H */

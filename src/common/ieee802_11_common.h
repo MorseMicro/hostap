@@ -1,6 +1,7 @@
 /*
  * IEEE 802.11 Common routines
  * Copyright (c) 2002-2019, Jouni Malinen <j@w1.fi>
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -73,6 +74,7 @@ struct ieee802_11_elems {
 	const u8 *qos_map_set;
 	const u8 *hs20;
 	const u8 *ext_capab;
+	const u8 *qos_traffic_cap;
 	const u8 *bss_max_idle_period;
 	const u8 *ssid_list;
 	const u8 *mbo;
@@ -107,6 +109,7 @@ struct ieee802_11_elems {
 	const u8 *he_6ghz_band_cap;
 	const u8 *sae_pk;
 	const u8 *s1g_capab;
+	const u8 *max_away_duration;
 	const u8 *pasn_params;
 	const u8 *eht_capabilities;
 	const u8 *eht_operation;
@@ -123,6 +126,7 @@ struct ieee802_11_elems {
 	const u8 *rsn_selection;
 	const u8 *wfa_capab;
 	const u8 *proximity_ranging;
+	const u8 *aid;
 
 	u8 ssid_len;
 	u8 supp_rates_len;
@@ -150,6 +154,7 @@ struct ieee802_11_elems {
 	u8 qos_map_set_len;
 	u8 hs20_len;
 	u8 ext_capab_len;
+	u8 qos_traffic_cap_len;
 	u8 ssid_list_len;
 	u8 mbo_len;
 	u8 ampe_len;
@@ -247,6 +252,7 @@ int hostapd_config_tx_queue(struct hostapd_tx_queue_params queue[],
 			    const char *name, const char *val);
 enum hostapd_hw_mode ieee80211_freq_to_chan(int freq, u8 *channel);
 int ieee80211_chan_to_freq(const char *country, u8 op_class, u8 chan);
+int ieee80211_chan_to_freq_khz(const char *country, u8 op_class, u8 chan);
 enum hostapd_hw_mode
 ieee80211_freq_to_channel_ext(unsigned int freq, int sec_channel,
 			      enum oper_chan_width chanwidth,
@@ -313,6 +319,7 @@ int get_6ghz_sec_channel(int channel);
 bool is_same_band(int freq1, int freq2);
 #define IS_2P4GHZ(n) (n >= 2412 && n <= 2484)
 #define IS_5GHZ(n) (n > 4000 && n < 5895)
+bool is_s1ghz_freq(int freq);
 
 int ieee802_11_parse_candidate_list(const char *pos, u8 *nei_rep,
 				    size_t nei_rep_len);

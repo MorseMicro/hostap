@@ -1,6 +1,7 @@
 /*
  * wpa_supplicant/hostapd / common helper functions, etc.
  * Copyright (c) 2002-2007, Jouni Malinen <j@w1.fi>
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -10,6 +11,7 @@
 #define COMMON_H
 
 #include "os.h"
+#include "drivers/nl80211_copy.h"
 
 #if defined(__linux__) || defined(__GLIBC__)
 #include <endian.h>
@@ -210,58 +212,58 @@ static inline unsigned int wpa_swap_32(unsigned int v)
 
 /* Macros for handling unaligned memory accesses */
 
-static inline u16 WPA_GET_BE16(const u8 *a)
+inline u16 WPA_GET_BE16(const u8 *a)
 {
 	return (a[0] << 8) | a[1];
 }
 
-static inline void WPA_PUT_BE16(u8 *a, u16 val)
+inline void WPA_PUT_BE16(u8 *a, u16 val)
 {
 	a[0] = val >> 8;
 	a[1] = val & 0xff;
 }
 
-static inline u16 WPA_GET_LE16(const u8 *a)
+inline u16 WPA_GET_LE16(const u8 *a)
 {
 	return (a[1] << 8) | a[0];
 }
 
-static inline void WPA_PUT_LE16(u8 *a, u16 val)
+inline void WPA_PUT_LE16(u8 *a, u16 val)
 {
 	a[1] = val >> 8;
 	a[0] = val & 0xff;
 }
 
-static inline u32 WPA_GET_BE24(const u8 *a)
+inline u32 WPA_GET_BE24(const u8 *a)
 {
 	return (a[0] << 16) | (a[1] << 8) | a[2];
 }
 
-static inline void WPA_PUT_BE24(u8 *a, u32 val)
+inline void WPA_PUT_BE24(u8 *a, u32 val)
 {
 	a[0] = (val >> 16) & 0xff;
 	a[1] = (val >> 8) & 0xff;
 	a[2] = val & 0xff;
 }
 
-static inline u32 WPA_GET_LE24(const u8 *a)
+inline u32 WPA_GET_LE24(const u8 *a)
 {
 	return (a[2] << 16) | (a[1] << 8) | a[0];
 }
 
-static inline void WPA_PUT_LE24(u8 *a, u32 val)
+inline void WPA_PUT_LE24(u8 *a, u32 val)
 {
 	a[2] = (val >> 16) & 0xff;
 	a[1] = (val >> 8) & 0xff;
 	a[0] = val & 0xff;
 }
 
-static inline u32 WPA_GET_BE32(const u8 *a)
+inline u32 WPA_GET_BE32(const u8 *a)
 {
 	return ((u32) a[0] << 24) | (a[1] << 16) | (a[2] << 8) | a[3];
 }
 
-static inline void WPA_PUT_BE32(u8 *a, u32 val)
+inline void WPA_PUT_BE32(u8 *a, u32 val)
 {
 	a[0] = (val >> 24) & 0xff;
 	a[1] = (val >> 16) & 0xff;
@@ -269,12 +271,12 @@ static inline void WPA_PUT_BE32(u8 *a, u32 val)
 	a[3] = val & 0xff;
 }
 
-static inline u32 WPA_GET_LE32(const u8 *a)
+inline u32 WPA_GET_LE32(const u8 *a)
 {
 	return ((u32) a[3] << 24) | (a[2] << 16) | (a[1] << 8) | a[0];
 }
 
-static inline void WPA_PUT_LE32(u8 *a, u32 val)
+inline void WPA_PUT_LE32(u8 *a, u32 val)
 {
 	a[3] = (val >> 24) & 0xff;
 	a[2] = (val >> 16) & 0xff;
@@ -282,14 +284,14 @@ static inline void WPA_PUT_LE32(u8 *a, u32 val)
 	a[0] = val & 0xff;
 }
 
-static inline u64 WPA_GET_LE48(const u8 *a)
+inline u64 WPA_GET_LE48(const u8 *a)
 {
 	return (((u64) a[5]) << 40) | (((u64) a[4]) << 32) |
 		(((u64) a[3]) << 24) | (((u64) a[2]) << 16) |
 		(((u64) a[1]) << 8) | ((u64) a[0]);
 }
 
-static inline void WPA_PUT_LE48(u8 *a, u64 val)
+inline void WPA_PUT_LE48(u8 *a, u64 val)
 {
 	a[5] = val >> 40;
 	a[4] = val >> 32;
@@ -299,7 +301,7 @@ static inline void WPA_PUT_LE48(u8 *a, u64 val)
 	a[0] = val & 0xff;
 }
 
-static inline u64 WPA_GET_BE64(const u8 *a)
+inline u64 WPA_GET_BE64(const u8 *a)
 {
 	return (((u64) a[0]) << 56) | (((u64) a[1]) << 48) |
 		(((u64) a[2]) << 40) | (((u64) a[3]) << 32) |
@@ -307,7 +309,7 @@ static inline u64 WPA_GET_BE64(const u8 *a)
 		(((u64) a[6]) << 8) | ((u64) a[7]);
 }
 
-static inline void WPA_PUT_BE64(u8 *a, u64 val)
+inline void WPA_PUT_BE64(u8 *a, u64 val)
 {
 	a[0] = val >> 56;
 	a[1] = val >> 48;
@@ -319,7 +321,7 @@ static inline void WPA_PUT_BE64(u8 *a, u64 val)
 	a[7] = val & 0xff;
 }
 
-static inline u64 WPA_GET_LE64(const u8 *a)
+inline u64 WPA_GET_LE64(const u8 *a)
 {
 	return (((u64) a[7]) << 56) | (((u64) a[6]) << 48) |
 		(((u64) a[5]) << 40) | (((u64) a[4]) << 32) |
@@ -327,7 +329,7 @@ static inline u64 WPA_GET_LE64(const u8 *a)
 		(((u64) a[1]) << 8) | ((u64) a[0]);
 }
 
-static inline void WPA_PUT_LE64(u8 *a, u64 val)
+inline void WPA_PUT_LE64(u8 *a, u64 val)
 {
 	a[7] = val >> 56;
 	a[6] = val >> 48;
@@ -556,22 +558,22 @@ size_t merge_byte_arrays(u8 *res, size_t res_len,
 			 const u8 *src2, size_t src2_len);
 char * dup_binstr(const void *src, size_t len);
 
-static inline int is_zero_ether_addr(const u8 *a)
+inline int is_zero_ether_addr(const u8 *a)
 {
 	return !(a[0] | a[1] | a[2] | a[3] | a[4] | a[5]);
 }
 
-static inline int is_broadcast_ether_addr(const u8 *a)
+inline int is_broadcast_ether_addr(const u8 *a)
 {
 	return (a[0] & a[1] & a[2] & a[3] & a[4] & a[5]) == 0xff;
 }
 
-static inline int is_multicast_ether_addr(const u8 *a)
+inline int is_multicast_ether_addr(const u8 *a)
 {
 	return a[0] & 0x01;
 }
 
-static inline bool ether_addr_equal(const u8 *a, const u8 *b)
+inline bool ether_addr_equal(const u8 *a, const u8 *b)
 {
 	return os_memcmp(a, b, ETH_ALEN) == 0;
 }
@@ -655,5 +657,7 @@ void * __hide_aliasing_typecast(void *foo);
 #else /* CONFIG_VALGRIND */
 #define WPA_MEM_DEFINED(ptr, len) do { } while (0)
 #endif /* CONFIG_VALGRIND */
+
+int ieee80211_channel_to_frequency(int chan, enum nl80211_band band);
 
 #endif /* COMMON_H */

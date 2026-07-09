@@ -1,0 +1,6 @@
+AIDL Source
+------------
+
+The AIDL library used here has been cloned from the android-14.0 branch of the android_external_wpa_supplicant_8 repository
+URL: https://github.com/raspberry-vanilla/android_external_wpa_supplicant_8/tree/android-14.0/wpa_supplicant/aidl
+git hash: c7a0394e5a3b42edff51362df9febf3f29223d76

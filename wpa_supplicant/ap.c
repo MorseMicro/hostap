@@ -2,6 +2,7 @@
  * WPA Supplicant - Basic AP mode support routines
  * Copyright (c) 2003-2009, Jouni Malinen <j@w1.fi>
  * Copyright (c) 2009, Atheros Communications
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -292,6 +293,26 @@ int wpa_supplicant_conf_ap_ht(struct wpa_supplicant *wpa_s,
 			   "Determining HT/VHT options based on driver capabilities (freq=%u chan=%u)",
 			   ssid->frequency, conf->channel);
 
+#ifdef CONFIG_IEEE80211AH
+		if (wpa_s->conf->op_class) {
+			int op_class_idx = morse_s1g_verify_op_class_country(
+					   wpa_s->conf->op_class,
+					   wpa_s->conf->country,
+					   conf->s1g_prim_1mhz_chan_index);
+			if (op_class_idx < 0) {
+				conf->s1g_op_class = 0;
+				wpa_printf(MSG_ERROR,
+					   "Failed to determine s1g op class (country=%s op_class=%d s1g_prim_1mhz_chan_index=%d)",
+					   wpa_s->conf->country,
+					   wpa_s->conf->op_class,
+					   conf->s1g_prim_1mhz_chan_index);
+			} else
+				conf->s1g_op_class = (u8) op_class_idx;
+			wpa_printf(MSG_DEBUG, "s1g op class set: %d", conf->s1g_op_class);
+		} else
+			wpa_printf(MSG_DEBUG, "s1g op class not set: %d", conf->s1g_op_class);
+#endif /* CONFIG_IEEE80211AH */
+
 		mode = get_mode(wpa_s->hw.modes, wpa_s->hw.num_modes,
 				conf->hw_mode, is_6ghz_freq(ssid->frequency));
 
@@ -454,7 +475,8 @@ int wpa_supplicant_conf_ap_ht(struct wpa_supplicant *wpa_s,
 		{
 			if (iface == wpa_s ||
 			    iface->wpa_state < WPA_AUTHENTICATING ||
-			    (int) iface->assoc_freq != ssid->frequency)
+			    (int) (MHZ_TO_KHZ(iface->assoc_freq) + iface->assoc_freq_offset)
+			    != MHZ_TO_KHZ(ssid->frequency) + ssid->freq_offset)
 				continue;
 
 			/*
@@ -501,6 +523,14 @@ static int wpa_supplicant_conf_ap(struct wpa_supplicant *wpa_s,
 		wpa_printf(MSG_DEBUG, "Use automatic channel selection");
 	}
 #endif /* CONFIG_ACS */
+
+#ifdef CONFIG_IEEE80211AH
+	if (wpa_s->conf->country[0]) {
+		conf->op_country[0] = wpa_s->conf->country[0];
+		conf->op_country[1] = wpa_s->conf->country[1];
+		conf->op_country[2] = ' ';
+	}
+#endif
 
 	if (ieee80211_is_dfs(ssid->frequency, wpa_s->hw.modes,
 			     wpa_s->hw.num_modes) && wpa_s->conf->country[0]) {
@@ -1170,6 +1200,7 @@ int wpa_supplicant_create_ap(struct wpa_supplicant *wpa_s,
 	eapol_sm_notify_config(wpa_s->eapol, NULL, NULL);
 	os_memcpy(wpa_s->bssid, wpa_s->own_addr, ETH_ALEN);
 	wpa_s->assoc_freq = ssid->frequency;
+	wpa_s->assoc_freq_offset = ssid->freq_offset;
 	wpa_s->ap_iface->conf->enable_edmg = ssid->enable_edmg;
 	wpa_s->ap_iface->conf->edmg_channel = ssid->edmg_channel;
 
@@ -1671,6 +1702,8 @@ int ap_ctrl_iface_acl_add_mac(struct wpa_supplicant *wpa_s,
 
 	if (wpa_s->ap_iface)
 		hapd = wpa_s->ap_iface->bss[0];
+	else if (wpa_s->ifmsh)
+		hapd = wpa_s->ifmsh->bss[0];
 	else
 		return -1;
 
@@ -1697,6 +1730,8 @@ int ap_ctrl_iface_acl_del_mac(struct wpa_supplicant *wpa_s,
 
 	if (wpa_s->ap_iface)
 		hapd = wpa_s->ap_iface->bss[0];
+	else if (wpa_s->ifmsh)
+		hapd = wpa_s->ifmsh->bss[0];
 	else
 		return -1;
 
@@ -1723,6 +1758,8 @@ int ap_ctrl_iface_acl_show_mac(struct wpa_supplicant *wpa_s,
 
 	if (wpa_s->ap_iface)
 		hapd = wpa_s->ap_iface->bss[0];
+	else if (wpa_s->ifmsh)
+		hapd = wpa_s->ifmsh->bss[0];
 	else
 		return -1;
 
@@ -1746,6 +1783,8 @@ void ap_ctrl_iface_acl_clear_list(struct wpa_supplicant *wpa_s,
 
 	if (wpa_s->ap_iface)
 		hapd = wpa_s->ap_iface->bss[0];
+	else if (wpa_s->ifmsh)
+		hapd = wpa_s->ifmsh->bss[0];
 	else
 		return;
 
@@ -1766,6 +1805,8 @@ int ap_ctrl_iface_disassoc_deny_mac(struct wpa_supplicant *wpa_s)
 
 	if (wpa_s->ap_iface)
 		hapd = wpa_s->ap_iface->bss[0];
+	else if (wpa_s->ifmsh)
+		hapd = wpa_s->ifmsh->bss[0];
 	else
 		return -1;
 
@@ -1779,6 +1820,8 @@ int ap_ctrl_iface_disassoc_accept_mac(struct wpa_supplicant *wpa_s)
 
 	if (wpa_s->ap_iface)
 		hapd = wpa_s->ap_iface->bss[0];
+	else if (wpa_s->ifmsh)
+		hapd = wpa_s->ifmsh->bss[0];
 	else
 		return -1;
 
@@ -1792,6 +1835,8 @@ int ap_ctrl_iface_set_acl(struct wpa_supplicant *wpa_s)
 
 	if (wpa_s->ap_iface)
 		hapd = wpa_s->ap_iface->bss[0];
+	else if (wpa_s->ifmsh)
+		hapd = wpa_s->ifmsh->bss[0];
 	else
 		return -1;
 

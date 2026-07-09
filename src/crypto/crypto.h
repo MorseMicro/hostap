@@ -924,6 +924,7 @@ int crypto_ec_point_cmp(const struct crypto_ec *e,
 			const struct crypto_ec_point *a,
 			const struct crypto_ec_point *b);
 
+#if !defined(CONFIG_NO_STDOUT_DEBUG)
 /**
  * crypto_ec_point_debug_print - Dump EC point to debug log
  * @e: EC context from crypto_ec_init()
@@ -933,6 +934,14 @@ int crypto_ec_point_cmp(const struct crypto_ec *e,
 void crypto_ec_point_debug_print(const struct crypto_ec *e,
 				 const struct crypto_ec_point *p,
 				 const char *title);
+#else
+static inline
+void crypto_ec_point_debug_print(const struct crypto_ec *e,
+				 const struct crypto_ec_point *p,
+				 const char *title)
+{
+}
+#endif
 
 /**
  * struct crypto_ec_key - Elliptic curve key pair
@@ -1182,6 +1191,7 @@ int crypto_ec_key_group(struct crypto_ec_key *key);
  */
 int crypto_ec_key_cmp(struct crypto_ec_key *key1, struct crypto_ec_key *key2);
 
+#if !defined(CONFIG_NO_STDOUT_DEBUG)
 /**
  * crypto_ec_key_debug_print - Dump EC key to debug log
  * @key:  EC key from crypto_ec_key_parse/set_pub/priv() or crypto_ec_key_gen()
@@ -1189,6 +1199,13 @@ int crypto_ec_key_cmp(struct crypto_ec_key *key1, struct crypto_ec_key *key2);
  */
 void crypto_ec_key_debug_print(const struct crypto_ec_key *key,
 			       const char *title);
+#else
+static inline
+void crypto_ec_key_debug_print(const struct crypto_ec_key *key,
+			       const char *title)
+{
+}
+#endif
 
 /**
  * struct crypto_csr - Certification Signing Request

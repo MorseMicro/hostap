@@ -668,7 +668,7 @@ struct dpp_authentication *
 dpp_auth_req_rx(struct dpp_global *dpp, void *msg_ctx, u8 dpp_allowed_roles,
 		int qr_mutual, struct dpp_bootstrap_info *peer_bi,
 		struct dpp_bootstrap_info *own_bi,
-		unsigned int freq, const u8 *hdr, const u8 *attr_start,
+		unsigned int freq, unsigned int freq_offset, const u8 *hdr, const u8 *attr_start,
 		size_t attr_len)
 {
 	struct crypto_ec_key *pi = NULL;
@@ -716,6 +716,7 @@ dpp_auth_req_rx(struct dpp_global *dpp, void *msg_ctx, u8 dpp_allowed_roles,
 	auth->own_bi = own_bi;
 	auth->curve = own_bi->curve;
 	auth->curr_freq = freq;
+	auth->curr_freq_offset = freq_offset;
 
 	auth->peer_version = 1; /* default to the first version */
 #ifdef CONFIG_DPP2
@@ -736,28 +737,35 @@ dpp_auth_req_rx(struct dpp_global *dpp, void *msg_ctx, u8 dpp_allowed_roles,
 	channel = dpp_get_attr(attr_start, attr_len, DPP_ATTR_CHANNEL,
 			       &channel_len);
 	if (channel) {
+		int neg_freq_khz;
 		int neg_freq;
+		int neg_freq_offset;
 
 		if (channel_len < 2) {
 			dpp_auth_fail(auth, "Too short Channel attribute");
 			goto fail;
 		}
 
-		neg_freq = ieee80211_chan_to_freq(NULL, channel[0], channel[1]);
+		neg_freq_khz = ieee80211_chan_to_freq_khz(NULL, channel[0], channel[1]);
+		neg_freq = neg_freq_khz / 1000;
+		neg_freq_offset = neg_freq_khz % 1000;
 		wpa_printf(MSG_DEBUG,
-			   "DPP: Initiator requested different channel for negotiation: op_class=%u channel=%u --> freq=%d",
-			   channel[0], channel[1], neg_freq);
+			   "DPP: Initiator requested different channel for negotiation: "
+			   "op_class=%u channel=%u --> freq=%d, freq_offset=%d",
+			   channel[0], channel[1], neg_freq, neg_freq_offset);
 		if (neg_freq < 0) {
 			dpp_auth_fail(auth,
 				      "Unsupported Channel attribute value");
 			goto fail;
 		}
 
-		if (auth->curr_freq != (unsigned int) neg_freq) {
+		if (auth->curr_freq != (unsigned int) neg_freq ||
+			  auth->curr_freq_offset != (unsigned int) neg_freq_offset) {
 			wpa_printf(MSG_DEBUG,
-				   "DPP: Changing negotiation channel from %u MHz to %u MHz",
-				   freq, neg_freq);
+				   "DPP: Changing negotiation channel from %u.%3u MHz to %u.%3u MHz",
+				   freq, freq_offset, neg_freq, neg_freq_offset);
 			auth->curr_freq = neg_freq;
+			auth->curr_freq_offset = neg_freq_offset;
 		}
 	}
 

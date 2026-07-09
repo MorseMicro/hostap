@@ -26,6 +26,25 @@ static struct wpabuf_trace * wpabuf_get_trace(const struct wpabuf *buf)
 }
 #endif /* WPA_TRACE */
 
+/* Functions defined as inline in wpabuf.h: */
+extern size_t wpabuf_size(const struct wpabuf *buf);
+extern size_t wpabuf_len(const struct wpabuf *buf);
+extern size_t wpabuf_tailroom(const struct wpabuf *buf);
+extern int wpabuf_cmp(const struct wpabuf *a, const struct wpabuf *b);
+extern const void * wpabuf_head(const struct wpabuf *buf);
+extern const u8 * wpabuf_head_u8(const struct wpabuf *buf);
+extern void wpabuf_put_u8(struct wpabuf *buf, u8 data);
+extern void wpabuf_put_le16(struct wpabuf *buf, u16 data);
+extern void wpabuf_put_le24(struct wpabuf *buf, u32 data);
+extern void wpabuf_put_le32(struct wpabuf *buf, u32 data);
+extern void wpabuf_put_le64(struct wpabuf *buf, u64 data);
+extern void wpabuf_put_be16(struct wpabuf *buf, u16 data);
+extern void wpabuf_put_be24(struct wpabuf *buf, u32 data);
+extern void wpabuf_put_be32(struct wpabuf *buf, u32 data);
+extern void wpabuf_put_be64(struct wpabuf *buf, u64 data);
+extern void wpabuf_put_data(struct wpabuf *buf, const void *data, size_t len);
+extern void wpabuf_put_buf(struct wpabuf *dst, const struct wpabuf *src);
+extern void wpabuf_put_str(struct wpabuf *dst, const char *str);
 
 static void wpabuf_overflow(const struct wpabuf *buf, size_t len)
 {

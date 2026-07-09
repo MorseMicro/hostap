@@ -50,6 +50,13 @@ DRV_OBJS += ../src/drivers/driver_nl80211_scan.o
 ifdef CONFIG_DRIVER_NL80211_QCA
 DRV_CFLAGS += -DCONFIG_DRIVER_NL80211_QCA
 endif
+ifdef CONFIG_AIDL
+DRV_OBJS += ../src/drivers/driver_nl80211_android.o
+DRV_CFLAGS += -DANDROID
+ifeq ($(BOARD_WPA_SUPPLICANT_PRIVATE_LIB),)
+DRV_CFLAGS += -DANDROID_LIB_STUB
+endif
+endif
 NEED_SME=y
 NEED_AP_MLME=y
 NEED_NETLINK=y
@@ -187,7 +194,9 @@ else
   else
     ifndef CONFIG_OSX
       DRV_LIBS += -lnl
+    ifndef CONFIG_ANDROID
       DRV_LIBS += -lnl-genl
+    endif
     endif
   endif
 endif

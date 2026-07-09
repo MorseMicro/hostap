@@ -16,7 +16,7 @@
 struct gas_server;
 
 struct gas_server * gas_server_init(void *ctx,
-				    void (*tx)(void *ctx, int freq,
+				    void (*tx)(void *ctx, int freq, int freq_offset,
 					       const u8 *da,
 					       struct wpabuf *buf,
 					       unsigned int wait_time));
@@ -32,7 +32,7 @@ int gas_server_register(struct gas_server *gas,
 			void *ctx);
 int gas_server_rx(struct gas_server *gas, const u8 *da, const u8 *sa,
 		  const u8 *bssid, u8 categ, const u8 *data, size_t len,
-		  int freq);
+		  int freq, int freq_offset);
 void gas_server_tx_status(struct gas_server *gas, const u8 *dst, const u8 *data,
 			  size_t data_len, int ack);
 int gas_server_set_comeback_delay(struct gas_server *gas, void *resp_ctx,

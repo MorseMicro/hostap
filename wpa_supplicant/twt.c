@@ -84,7 +84,7 @@ int wpas_twt_send_setup(struct wpa_supplicant *wpa_s, u8 dtok, int exponent,
 	wpabuf_put_le16(buf, mantissa); /* TWT Wake Interval Mantissa */
 	wpabuf_put_u8(buf, twt_channel); /* TWT Channel */
 
-	if (wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, wpa_s->bssid,
+	if (wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, 0, wpa_s->bssid,
 				wpa_s->own_addr, wpa_s->bssid,
 				wpabuf_head(buf), wpabuf_len(buf), 0) < 0) {
 		wpa_printf(MSG_DEBUG, "TWT: Failed to send TWT Setup Request");
@@ -128,7 +128,7 @@ int wpas_twt_send_teardown(struct wpa_supplicant *wpa_s, u8 flags)
 	wpabuf_put_u8(buf, S1G_ACT_TWT_TEARDOWN);
 	wpabuf_put_u8(buf, flags);
 
-	if (wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, wpa_s->bssid,
+	if (wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, 0, wpa_s->bssid,
 				wpa_s->own_addr, wpa_s->bssid,
 				wpabuf_head(buf), wpabuf_len(buf), 0) < 0) {
 		wpa_printf(MSG_DEBUG, "TWT: Failed to send TWT Teardown frame");

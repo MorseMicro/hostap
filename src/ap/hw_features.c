@@ -3,6 +3,7 @@
  * Copyright 2002-2003, Instant802 Networks, Inc.
  * Copyright 2005-2006, Devicescape Software, Inc.
  * Copyright (c) 2008-2012, Jouni Malinen <j@w1.fi>
+ * Copyright 2021 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -12,6 +13,7 @@
 
 #include "utils/common.h"
 #include "utils/eloop.h"
+#include "utils/morse.h"
 #include "common/ieee802_11_defs.h"
 #include "common/ieee802_11_common.h"
 #include "common/wpa_ctrl.h"
@@ -155,11 +157,18 @@ int hostapd_get_hw_features(struct hostapd_iface *iface)
 			if (feature->channels[j].flag & HOSTAPD_CHAN_DISABLED)
 				continue;
 
-			wpa_printf(MSG_MSGDUMP, "Allowed channel: mode=%d "
-				   "chan=%d freq=%d MHz max_tx_power=%d dBm%s",
+			wpa_printf(MSG_MSGDUMP, "Allowed channel: mode=%d chan=%d "
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+				   "5g_chan=%d "
+#endif
+				   "freq=%d MHz freq_offset=%d KHz max_tx_power=%d dBm%s",
 				   feature->mode,
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+				   morse_ht_chan_to_s1g_chan(feature->channels[j].chan),
+#endif
 				   feature->channels[j].chan,
 				   feature->channels[j].freq,
+				   feature->channels[j].freq_offset,
 				   feature->channels[j].max_tx_power,
 				   dfs ? dfs_info(&feature->channels[j]) : "");
 		}
@@ -277,19 +286,34 @@ static int ieee80211n_allowed_ht40_channel_pair(struct hostapd_iface *iface)
 	if (!iface->current_mode)
 		return 0;
 
-	p_chan = hw_get_channel_freq(iface->current_mode->mode, pri_freq, NULL,
+	p_chan = hw_get_channel_freq(iface->current_mode->mode, pri_freq, 0, NULL,
 				     iface->hw_features,
 				     iface->num_hw_features);
 
-	s_chan = hw_get_channel_freq(iface->current_mode->mode, sec_freq, NULL,
+	s_chan = hw_get_channel_freq(iface->current_mode->mode, sec_freq, 0, NULL,
 				     iface->hw_features,
 				     iface->num_hw_features);
+
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+	/* S1G channels with 1MHz S1G Primary need only validate HT40 primary, not secondary */
+	if (iface->conf->ieee80211ah && iface->conf->s1g_prim_chwidth == S1G_PRIM_CHWIDTH_1) {
+		if (chan_pri_allowed(p_chan))
+			return 1;
+
+		wpa_printf(MSG_ERROR, "Channel %d is not allowed as primary", p_chan->chan);
+		return 0;
+	}
+#endif
 
 	return allowed_ht40_channel_pair(iface->current_mode->mode,
 					 p_chan, s_chan);
 }
 
 
+/* SW-4065: hostapd suggests to switch pri/sec. Ignore it! */
+#define MORSE_IGNORE_PRI_SEC_SWITCH
+
+#ifndef CONFIG_MORSE_5GHZ_MAPPED
 static void ieee80211n_switch_pri_sec(struct hostapd_iface *iface)
 {
 	if (iface->conf->secondary_channel > 0) {
@@ -302,6 +326,7 @@ static void ieee80211n_switch_pri_sec(struct hostapd_iface *iface)
 		iface->conf->secondary_channel = 1;
 	}
 }
+#endif
 
 
 static int ieee80211n_check_40mhz_5g(struct hostapd_iface *iface,
@@ -316,10 +341,10 @@ static int ieee80211n_check_40mhz_5g(struct hostapd_iface *iface,
 
 	if (!iface->current_mode)
 		return 0;
-	pri_chan = hw_get_channel_freq(iface->current_mode->mode, pri_freq,
+	pri_chan = hw_get_channel_freq(iface->current_mode->mode, pri_freq, 0,
 				       NULL, iface->hw_features,
 				       iface->num_hw_features);
-	sec_chan = hw_get_channel_freq(iface->current_mode->mode, sec_freq,
+	sec_chan = hw_get_channel_freq(iface->current_mode->mode, sec_freq, 0,
 				       NULL, iface->hw_features,
 				       iface->num_hw_features);
 
@@ -330,7 +355,11 @@ static int ieee80211n_check_40mhz_5g(struct hostapd_iface *iface,
 			wpa_printf(MSG_DEBUG,
 				   "Cannot switch PRI/SEC channels due to local constraint");
 		} else {
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+			wpa_printf(MSG_DEBUG, "Switch PRI/SEC channels ignored");
+#else
 			ieee80211n_switch_pri_sec(iface);
+#endif
 		}
 	}
 
@@ -774,6 +803,9 @@ int hostapd_check_ht_capab(struct hostapd_iface *iface)
 	    !ieee80211ac_supported_vht_capab(iface))
 		return -1;
 #endif /* CONFIG_IEEE80211AC */
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+	iface->conf->no_pri_sec_switch = 1;
+#endif /* CONFIG_MORSE_5GHZ_MAPPED */
 	ret = ieee80211n_check_40mhz(iface);
 	if (ret)
 		return ret;
@@ -861,15 +893,16 @@ int hostapd_check_he_6ghz_capab(struct hostapd_iface *iface)
  * -1 = not currently usable due to 6 GHz NO-IR
  */
 static int hostapd_is_usable_chan(struct hostapd_iface *iface,
-				  int frequency, int primary)
+				  int frequency, int freq_offset, int primary)
 {
 	struct hostapd_channel_data *chan;
 
 	if (!iface->current_mode)
 		return 0;
 
-	chan = hw_get_channel_freq(iface->current_mode->mode, frequency, NULL,
-				   iface->hw_features, iface->num_hw_features);
+	chan = hw_get_channel_freq(iface->current_mode->mode, frequency,
+				   freq_offset, NULL, iface->hw_features,
+				   iface->num_hw_features);
 	if (!chan)
 		return 0;
 
@@ -878,10 +911,11 @@ static int hostapd_is_usable_chan(struct hostapd_iface *iface,
 		return 1;
 
 	wpa_printf(MSG_INFO,
-		   "Frequency %d (%s) not allowed for AP mode, flags: 0x%x%s%s",
+		   "Frequency %d (%s) not allowed for AP mode, flags: 0x%x%s%s%s",
 		   frequency, primary ? "primary" : "secondary",
 		   chan->flag,
 		   chan->flag & HOSTAPD_CHAN_NO_IR ? " NO-IR" : "",
+		   chan->flag & HOSTAPD_CHAN_DISABLED ? " DISABLED" : "",
 		   chan->flag & HOSTAPD_CHAN_RADAR ? " RADAR" : "");
 
 	if (is_6ghz_freq(chan->freq) && (chan->flag & HOSTAPD_CHAN_NO_IR))
@@ -906,7 +940,7 @@ static int hostapd_is_usable_edmg(struct hostapd_iface *iface)
 	if (!iface->current_mode)
 		return 0;
 	pri_chan = hw_get_channel_freq(iface->current_mode->mode,
-				       iface->freq, NULL,
+				       iface->freq, 0, NULL,
 				       iface->hw_features,
 				       iface->num_hw_features);
 	if (!pri_chan)
@@ -936,7 +970,7 @@ static int hostapd_is_usable_edmg(struct hostapd_iface *iface)
 		if (num_of_enabled > 4)
 			return 0;
 
-		err = hostapd_is_usable_chan(iface, freq, 1);
+		err = hostapd_is_usable_chan(iface, freq, 0, 1);
 		if (err <= 0)
 			return err;
 
@@ -1038,7 +1072,8 @@ static int hostapd_is_usable_chans(struct hostapd_iface *iface)
 	if (!iface->current_mode)
 		return 0;
 	pri_chan = hw_get_channel_freq(iface->current_mode->mode,
-				       iface->freq, NULL,
+				       iface->freq,
+				       iface->freq_offset, NULL,
 				       iface->hw_features,
 				       iface->num_hw_features);
 	if (!pri_chan) {
@@ -1046,7 +1081,8 @@ static int hostapd_is_usable_chans(struct hostapd_iface *iface)
 		return 0;
 	}
 
-	err = hostapd_is_usable_chan(iface, pri_chan->freq, 1);
+	err = hostapd_is_usable_chan(iface, pri_chan->freq,
+				     pri_chan->freq_offset, 1);
 	if (err <= 0) {
 		wpa_printf(MSG_ERROR, "Primary frequency not allowed");
 		return err;
@@ -1061,8 +1097,35 @@ static int hostapd_is_usable_chans(struct hostapd_iface *iface)
 	if (!iface->conf->secondary_channel)
 		return 1;
 
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+	if (iface->conf->ieee80211ah) {
+		int ht_center_chan;
+		struct hostapd_channel_data *op_chan;
+
+		/* Find and verify the S1G operating channel */
+		ht_center_chan = morse_ht_chan_to_ht_chan_center(iface->conf, pri_chan->chan);
+		if (ht_center_chan == MORSE_S1G_RETURN_ERROR) {
+			wpa_printf(MSG_ERROR, "Could not find HT center channel");
+			return 0;
+		}
+
+		op_chan = hw_get_channel_chan(iface->current_mode, ht_center_chan, NULL);
+		if (!op_chan || op_chan->flag & HOSTAPD_CHAN_DISABLED) {
+			wpa_printf(MSG_ERROR, "HT center channel disabled (%d)",
+				   op_chan ? op_chan->chan : -1);
+			return 0;
+		}
+
+		/* If the S1G primary channel width is 1MHz there is no need to verify the HT40
+		 * secondary channel
+		 */
+		if (iface->conf->s1g_prim_chwidth == S1G_PRIM_CHWIDTH_1)
+			return 1;
+	}
+#endif
+
 	err = hostapd_is_usable_chan(iface, iface->freq +
-				     iface->conf->secondary_channel * 20, 0);
+				     iface->conf->secondary_channel * 20, 0, 0);
 	if (err > 0) {
 		if (iface->conf->secondary_channel == 1 &&
 		    (pri_chan->allowed_bw & HOSTAPD_CHAN_WIDTH_40P))
@@ -1076,14 +1139,14 @@ static int hostapd_is_usable_chans(struct hostapd_iface *iface)
 
 	/* Both HT40+ and HT40- are set, pick a valid secondary channel */
 	secondary_freq = iface->freq + 20;
-	err2 = hostapd_is_usable_chan(iface, secondary_freq, 0);
+	err2 = hostapd_is_usable_chan(iface, secondary_freq, 0, 0);
 	if (err2 > 0 && (pri_chan->allowed_bw & HOSTAPD_CHAN_WIDTH_40P)) {
 		iface->conf->secondary_channel = 1;
 		return 1;
 	}
 
 	secondary_freq = iface->freq - 20;
-	err2 = hostapd_is_usable_chan(iface, secondary_freq, 0);
+	err2 = hostapd_is_usable_chan(iface, secondary_freq, 0, 0);
 	if (err2 > 0 && (pri_chan->allowed_bw & HOSTAPD_CHAN_WIDTH_40M)) {
 		iface->conf->secondary_channel = -1;
 		return 1;
@@ -1098,7 +1161,7 @@ static bool skip_mode(struct hostapd_iface *iface,
 {
 	int chan;
 
-	if (iface->freq > 0 && !hw_mode_get_channel(mode, iface->freq, &chan))
+	if (iface->freq > 0 && !hw_mode_get_channel(mode, iface->freq, iface->freq_offset, &chan))
 		return true;
 
 	if (is_6ghz_op_class(iface->conf->op_class) && iface->freq == 0 &&
@@ -1216,7 +1279,15 @@ int hostapd_acs_completed(struct hostapd_iface *iface, int err)
 		iface->is_no_ir = false;
 		wpa_msg(iface->bss[0]->msg_ctx, MSG_INFO,
 			ACS_EVENT_COMPLETED "freq=%d channel=%d",
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+			morse_s1g_op_class_ht_chan_to_s1g_freq(iface->conf->s1g_op_class,
+					morse_ht_chan_to_ht_chan_center(iface->conf, iface->conf->channel)),
+			morse_ht_chan_to_s1g_chan(
+					morse_ht_chan_to_ht_chan_center(
+							iface->conf, iface->conf->channel)));
+#else
 			iface->freq, iface->conf->channel);
+#endif
 		break;
 	case HOSTAPD_CHAN_ACS:
 		wpa_printf(MSG_ERROR, "ACS error - reported complete, but no result available");
@@ -1368,13 +1439,14 @@ int hostapd_hw_get_freq(struct hostapd_data *hapd, int chan)
 }
 
 
-int hostapd_hw_get_channel(struct hostapd_data *hapd, int freq)
+int hostapd_hw_get_channel(struct hostapd_data *hapd, int freq, int freq_offset)
 {
 	int i, channel;
 	struct hostapd_hw_modes *mode;
 
 	if (hapd->iface->current_mode) {
-		channel = hw_get_chan(hapd->iface->current_mode->mode, freq,
+		channel = hw_get_chan(hapd->iface->current_mode->mode,
+				      freq, freq_offset,
 				      hapd->iface->hw_features,
 				      hapd->iface->num_hw_features);
 		if (channel)
@@ -1387,7 +1459,7 @@ int hostapd_hw_get_channel(struct hostapd_data *hapd, int freq)
 		return 0;
 	for (i = 0; i < hapd->iface->num_hw_features; i++) {
 		mode = &hapd->iface->hw_features[i];
-		channel = hw_get_chan(mode->mode, freq,
+		channel = hw_get_chan(mode->mode, freq, freq_offset,
 				      hapd->iface->hw_features,
 				      hapd->iface->num_hw_features);
 		if (channel)

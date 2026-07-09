@@ -124,15 +124,20 @@ static void wpas_send_action_cb(void *eloop_ctx, void *timeout_ctx)
 #endif /* CONFIG_TESTING_OPTIONS */
 			if (wpa_drv_remain_on_channel(
 				    wpa_s, wpa_s->pending_action_freq,
+				    wpa_s->pending_action_freq_offset,
 				    duration) < 0) {
 				wpa_printf(MSG_DEBUG, "Off-channel: Failed to "
 					   "request driver to remain on "
-					   "channel (%u MHz) for Action Frame "
-					   "TX", wpa_s->pending_action_freq);
+					   "channel (%u.%03u MHz) for Action Frame "
+					   "TX", wpa_s->pending_action_freq,
+					   wpa_s->pending_action_freq_offset);
 			} else {
 				wpa_s->off_channel_freq = 0;
+				wpa_s->off_channel_freq_offset = 0;
 				wpa_s->roc_waiting_drv_freq =
 					wpa_s->pending_action_freq;
+				wpa_s->roc_waiting_drv_freq_offset =
+					wpa_s->pending_action_freq_offset;
 			}
 		}
 		return;
@@ -142,7 +147,8 @@ static void wpas_send_action_cb(void *eloop_ctx, void *timeout_ctx)
 		   MACSTR " using interface %s (pending_action_tx=%p)",
 		   MAC2STR(wpa_s->pending_action_dst), iface->ifname,
 		   wpa_s->pending_action_tx);
-	res = wpa_drv_send_action(iface, wpa_s->pending_action_freq, 0,
+	res = wpa_drv_send_action(iface, wpa_s->pending_action_freq,
+				  wpa_s->pending_action_freq_offset, 0,
 				  wpa_s->pending_action_dst,
 				  wpa_s->pending_action_src,
 				  wpa_s->pending_action_bssid,
@@ -220,6 +226,7 @@ void offchannel_send_action_tx_status(
 	if (wpa_s->pending_action_tx_status_cb) {
 		wpa_s->pending_action_tx_status_cb(
 			wpa_s, wpa_s->pending_action_freq,
+			wpa_s->pending_action_freq_offset,
 			wpa_s->pending_action_dst, wpa_s->pending_action_src,
 			wpa_s->pending_action_bssid,
 			data, data_len, result);
@@ -240,6 +247,7 @@ void offchannel_send_action_tx_status(
  * @wpa_s: Pointer to wpa_supplicant data
  * @freq: The frequency in MHz indicating the channel on which the frame is to
  *	transmitted or 0 for the current channel (only if associated)
+ * @freq_offset: The offset from @freq in KHz
  * @dst: Action frame destination MAC address
  * @src: Action frame source MAC address
  * @bssid: Action frame BSSID
@@ -257,10 +265,13 @@ void offchannel_send_action_tx_status(
  * awake on the channel to wait for a response.
  */
 int offchannel_send_action(struct wpa_supplicant *wpa_s, unsigned int freq,
+			   unsigned int freq_offset,
 			   const u8 *dst, const u8 *src, const u8 *bssid,
 			   const u8 *buf, size_t len, unsigned int wait_time,
 			   void (*tx_cb)(struct wpa_supplicant *wpa_s,
-					 unsigned int freq, const u8 *dst,
+					 unsigned int freq,
+					 unsigned int freq_offset,
+					 const u8 *dst,
 					 const u8 *src, const u8 *bssid,
 					 const u8 *data, size_t data_len,
 					 enum offchannel_send_action_result
@@ -296,6 +307,7 @@ int offchannel_send_action(struct wpa_supplicant *wpa_s, unsigned int freq,
 	os_memcpy(wpa_s->pending_action_dst, dst, ETH_ALEN);
 	os_memcpy(wpa_s->pending_action_bssid, bssid, ETH_ALEN);
 	wpa_s->pending_action_freq = freq;
+	wpa_s->pending_action_freq_offset = freq_offset;
 	wpa_s->pending_action_no_cck = no_cck;
 	wpa_printf(MSG_DEBUG,
 		   "Off-channel: Stored pending action frame (dst=" MACSTR
@@ -315,6 +327,7 @@ int offchannel_send_action(struct wpa_supplicant *wpa_s, unsigned int freq,
 
 		ret = wpa_drv_send_action(
 			iface, wpa_s->pending_action_freq,
+			wpa_s->pending_action_freq_offset,
 			wait_time, wpa_s->pending_action_dst,
 			wpa_s->pending_action_src, wpa_s->pending_action_bssid,
 			wpabuf_head(wpa_s->pending_action_tx),
@@ -369,14 +382,16 @@ int offchannel_send_action(struct wpa_supplicant *wpa_s, unsigned int freq,
 		wait_time += wpa_s->extra_roc_dur;
 	}
 #endif /* CONFIG_TESTING_OPTIONS */
-	if (wpa_drv_remain_on_channel(wpa_s, freq, wait_time) < 0) {
+	if (wpa_drv_remain_on_channel(wpa_s, freq, freq_offset, wait_time) < 0) {
 		wpa_printf(MSG_DEBUG, "Off-channel: Failed to request driver "
 			   "to remain on channel (%u MHz) for Action "
 			   "Frame TX", freq);
 		return -1;
 	}
 	wpa_s->off_channel_freq = 0;
+	wpa_s->off_channel_freq_offset = 0;
 	wpa_s->roc_waiting_drv_freq = freq;
+	wpa_s->roc_waiting_drv_freq_offset = freq_offset;
 
 	return 0;
 }
@@ -392,11 +407,15 @@ int offchannel_send_action(struct wpa_supplicant *wpa_s, unsigned int freq,
 void offchannel_send_action_done(struct wpa_supplicant *wpa_s)
 {
 	wpa_printf(MSG_DEBUG,
-		   "Off-channel: Action frame sequence done notification: pending_action_tx=%p drv_offchan_tx=%d action_tx_wait_time=%d off_channel_freq=%d roc_waiting_drv_freq=%d",
+		   "Off-channel: Action frame sequence done notification: "
+		   "pending_action_tx=%p drv_offchan_tx=%d action_tx_wait_time=%d "
+		   "off_channel_freq=%d off_channel_freq_offset= %d "
+		   "roc_waiting_drv_freq=%d roc_waiting_drv_freq_offset=%d",
 		   wpa_s->pending_action_tx,
 		   !!(wpa_s->drv_flags & WPA_DRIVER_FLAGS_OFFCHANNEL_TX),
-		   wpa_s->action_tx_wait_time, wpa_s->off_channel_freq,
-		   wpa_s->roc_waiting_drv_freq);
+		   wpa_s->action_tx_wait_time,
+		   wpa_s->off_channel_freq, wpa_s->off_channel_freq_offset,
+		   wpa_s->roc_waiting_drv_freq, wpa_s->roc_waiting_drv_freq_offset);
 	wpabuf_free(wpa_s->pending_action_tx);
 	wpa_s->pending_action_tx = NULL;
 	if (wpa_s->drv_flags & WPA_DRIVER_FLAGS_OFFCHANNEL_TX &&
@@ -405,7 +424,9 @@ void offchannel_send_action_done(struct wpa_supplicant *wpa_s)
 	else if (wpa_s->off_channel_freq || wpa_s->roc_waiting_drv_freq) {
 		wpa_drv_cancel_remain_on_channel(wpa_s);
 		wpa_s->off_channel_freq = 0;
+		wpa_s->off_channel_freq_offset = 0;
 		wpa_s->roc_waiting_drv_freq = 0;
+		wpa_s->roc_waiting_drv_freq_offset = 0;
 	}
 	wpa_s->action_tx_wait_time_used = 0;
 }
@@ -421,10 +442,13 @@ void offchannel_send_action_done(struct wpa_supplicant *wpa_s)
  * remain-on-channel operation.
  */
 void offchannel_remain_on_channel_cb(struct wpa_supplicant *wpa_s,
-				     unsigned int freq, unsigned int duration)
+				     unsigned int freq,
+				     unsigned int freq_offset,
+				     unsigned int duration)
 {
 	wpa_s->roc_waiting_drv_freq = 0;
 	wpa_s->off_channel_freq = freq;
+	wpa_s->off_channel_freq_offset = freq_offset;
 	wpas_send_action_cb(wpa_s, NULL);
 }
 
@@ -438,9 +462,11 @@ void offchannel_remain_on_channel_cb(struct wpa_supplicant *wpa_s,
  * remain-on-channel operation.
  */
 void offchannel_cancel_remain_on_channel_cb(struct wpa_supplicant *wpa_s,
-					    unsigned int freq)
+					    unsigned int freq,
+					    unsigned int freq_offset)
 {
 	wpa_s->off_channel_freq = 0;
+	wpa_s->off_channel_freq_offset = 0;
 }
 
 

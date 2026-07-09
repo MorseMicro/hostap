@@ -1,6 +1,7 @@
 /*
  * WPA Supplicant - Scanning
  * Copyright (c) 2003-2019, Jouni Malinen <j@w1.fi>
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -12,6 +13,7 @@
 #include "utils/eloop.h"
 #include "common/ieee802_11_defs.h"
 #include "common/wpa_ctrl.h"
+#include "common/morse/morse_commands.h"
 #include "config.h"
 #include "wpa_supplicant_i.h"
 #include "driver_i.h"
@@ -23,6 +25,7 @@
 #include "bss.h"
 #include "scan.h"
 #include "mesh.h"
+#include "morse.h"
 
 static struct wpabuf * wpa_supplicant_extra_ies(struct wpa_supplicant *wpa_s);
 
@@ -329,7 +332,7 @@ int wpa_supplicant_trigger_scan(struct wpa_supplicant *wpa_s,
 	}
 
 	if (!ctx ||
-	    radio_add_work(wpa_s, 0, "scan", next, wpas_trigger_scan_cb,
+	    radio_add_work(wpa_s, 0, 0, "scan", next, wpas_trigger_scan_cb,
 			   ctx) < 0) {
 		wpa_scan_free_params(ctx);
 		wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_SCAN_FAILED "ret=-1");
@@ -794,9 +797,12 @@ static struct wpabuf * wpa_supplicant_extra_ies(struct wpa_supplicant *wpa_s)
 	}
 #endif /* CONFIG_P2P */
 
-	wpa_supplicant_mesh_add_scan_ie(wpa_s, &extra_ie);
-
 #endif /* CONFIG_WPS */
+
+#ifdef CONFIG_MESH
+	if (wpa_s->conf && wpa_s->conf->ssid && wpa_s->conf->ssid->mode == WPAS_MODE_MESH)
+		wpa_supplicant_mesh_add_scan_ie(wpa_s, &extra_ie);
+#endif /* CONFIG_MESH */
 
 #ifdef CONFIG_HS20
 	if (wpa_s->conf->hs20 && wpa_s->drv_max_probe_req_ie_len >= 9 &&
@@ -855,6 +861,47 @@ static int non_p2p_network_enabled(struct wpa_supplicant *wpa_s)
 
 #endif /* CONFIG_P2P */
 
+int calculate_min_scan_timeout(struct wpa_supplicant *wpa_s,
+			       struct wpa_driver_scan_params *params)
+{
+	int num_chans = 0;
+	int timeout;
+
+	if (params->freqs) {
+		while (params->freqs[num_chans])
+			num_chans++;
+	} else {
+		/* Freqs is not provided, will scan all usable channels in regdom */
+		int i, j;
+
+		if (!wpa_s->hw.modes)
+			return 0;
+
+		for (i = 0; i < wpa_s->hw.num_modes; i++) {
+			struct hostapd_hw_modes *mode = &wpa_s->hw.modes[i];
+
+			if (!mode->num_channels)
+				continue;
+
+			for (j = 0; j < mode->num_channels; j++) {
+				if (mode->channels[j].flag & HOSTAPD_CHAN_DISABLED)
+					continue;
+				if (mode->channels[j].flag & HOSTAPD_CHAN_RADAR)
+					continue;
+
+				num_chans++;
+			}
+		}
+	}
+
+	/* The minimum time required to scan is bound by the dwell duration and number of
+	 * channels. Include a second of overhead for each channel in the scan list.
+	 */
+	timeout = (params->duration * 1024 * num_chans) / 1000000;
+	timeout += 1 * num_chans;
+
+	return timeout;
+}
 
 int wpa_add_scan_freqs_list(struct wpa_supplicant *wpa_s,
 			    enum hostapd_hw_mode band,
@@ -1050,6 +1097,23 @@ static int wpa_set_ssids_from_scan_req(struct wpa_supplicant *wpa_s,
 	return 1;
 }
 
+#if defined(CONFIG_MESH) && defined(CONFIG_IEEE80211AH)
+static struct wpa_ssid *wpa_supplicant_get_mesh_ssid(struct wpa_supplicant *wpa_s)
+{
+	size_t prio;
+	struct wpa_ssid *ssid;
+
+	for (prio = 0; prio < wpa_s->conf->num_prio; prio++) {
+		for (ssid = wpa_s->conf->pssid[prio]; ssid; ssid = ssid->pnext) {
+			if (wpas_network_disabled(wpa_s, ssid))
+				continue;
+			if (ssid->mode == WPAS_MODE_MESH)
+				return ssid;
+		}
+	}
+	return NULL;
+}
+#endif
 
 static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 {
@@ -1091,6 +1155,14 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 		wpa_supplicant_set_state(wpa_s, WPA_INACTIVE);
 		return;
 	}
+
+#if defined(CONFIG_MESH) && defined(CONFIG_IEEE80211AH)
+	ssid = wpa_supplicant_get_mesh_ssid(wpa_s);
+	if (ssid && ssid->mode == WPAS_MODE_MESH) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "Scan is blocked in Mesh");
+		return;
+	}
+#endif
 
 	if (wpa_s->conf->ap_scan != 0 &&
 	    (wpa_s->drv_flags & WPA_DRIVER_FLAGS_WIRED)) {
@@ -1327,6 +1399,7 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 				os_free(params.freqs);
 				params.freqs = NULL;
 			}
+			params.freq_offset = tssid->scan_freq_offset;
 			freqs_set = 1;
 		}
 		int_array_sort_unique(params.freqs);
@@ -1369,6 +1442,14 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 		params.num_ssids++;
 		wpa_dbg(wpa_s, MSG_DEBUG, "Starting AP scan for wildcard "
 			"SSID");
+	}
+
+	if (wpa_s->conf->scan_dwell)
+		params.duration =  MAX(wpa_s->conf->scan_dwell, params.duration);
+
+	if (wpa_s->next_scan_dwell_duration) {
+		params.duration = wpa_s->next_scan_dwell_duration;
+		wpa_s->next_scan_dwell_duration = 0;
 	}
 
 ssid_list_set:
@@ -1435,6 +1516,9 @@ ssid_list_set:
 			}
 		}
 	}
+
+	if (params.duration)
+		params.min_scan_timeout = calculate_min_scan_timeout(wpa_s, &params);
 
 #ifdef CONFIG_MBO
 	if (wpa_s->enable_oce & OCE_STA)
@@ -1941,6 +2025,27 @@ scan:
 					       wpa_s->mac_addr_sched_scan);
 
 	wpa_scan_set_relative_rssi_params(wpa_s, scan_params);
+
+#if defined(CONFIG_MORSE_SET_SCHED_SCAN_DWELL) && defined(CONFIG_DRIVER_NL80211_MORSE)
+	if (wpa_s->conf->scan_dwell) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "Configuring dwell period for schedule scan %d TUs",
+			wpa_s->conf->scan_dwell);
+
+		if (!wpa_s->driver->param_get_set) {
+			wpa_printf(MSG_ERROR,
+				     "Driver interface not defined for param_get_set");
+			return -1;
+		}
+
+		if (wpa_s->driver->param_get_set(wpa_s->drv_priv,
+						MORSE_CMD_PARAM_ID_DEFAULT_ACTIVE_SCAN_DWELL_MS,
+						MORSE_CMD_PARAM_ACTION_SET,
+					      (wpa_s->conf->scan_dwell * 1024) / 1000, NULL)) {
+			wpa_printf(MSG_ERROR, "Failed to set active_scan_dwell_ms");
+			return -1;
+		}
+	}
+#endif /* CONFIG_MORSE_SET_SCHED_SCAN_DWELL && CONFIG_DRIVER_NL80211_MORSE*/
 
 	ret = wpa_supplicant_start_sched_scan(wpa_s, scan_params);
 	wpabuf_free(extra_ie);
@@ -2527,10 +2632,14 @@ static int wpa_scan_result_wps_compar(const void *a, const void *b)
 #endif /* CONFIG_WPS */
 
 
-static void dump_scan_res(struct wpa_scan_results *scan_res)
+static void dump_scan_res(struct wpa_scan_results *scan_res,
+						  struct wpa_supplicant *wpa_s)
 {
 #ifndef CONFIG_NO_STDOUT_DEBUG
 	size_t i;
+#ifdef CONFIG_IEEE80211AH
+	char *country = wpa_s->conf ? wpa_s->conf->country : NULL;
+#endif
 
 	if (scan_res->res == NULL || scan_res->num == 0)
 		return;
@@ -2552,23 +2661,47 @@ static void dump_scan_res(struct wpa_scan_results *scan_res)
 		if (r->flags & WPA_SCAN_LEVEL_DBM) {
 			int noise_valid = !(r->flags & WPA_SCAN_NOISE_INVALID);
 
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
 			wpa_printf(MSG_EXCESSIVE, MACSTR
-				   " ssid=%s freq=%d qual=%d noise=%d%s level=%d snr=%d%s flags=0x%x age=%u est=%u",
+				   " ssid=%s chan=%d qual=%d noise=%d%s level=%d snr=%d%s flags=0x%x age=%u est=%u",
 				   MAC2STR(r->bssid),
 				   wpa_ssid_txt(ssid, ssid_len),
-				   r->freq, r->qual,
+				   morse_ht_freq_to_s1g_chan(r->freq, country),
+				   r->qual,
 				   r->noise, noise_valid ? "" : "~", r->level,
 				   r->snr, r->snr >= GREAT_SNR ? "*" : "",
 				   r->flags,
 				   r->age, r->est_throughput);
-		} else {
+#else
 			wpa_printf(MSG_EXCESSIVE, MACSTR
-				   " ssid=%s freq=%d qual=%d noise=%d level=%d flags=0x%x age=%u est=%u",
+				   " ssid=%s freq=%d freq_offset=%d qual=%d noise=%d%s level=%d snr=%d%s flags=0x%x age=%u est=%u",
 				   MAC2STR(r->bssid),
 				   wpa_ssid_txt(ssid, ssid_len),
-				   r->freq, r->qual,
+				   r->freq, r->freq_offset, r->qual,
+				   r->noise, noise_valid ? "" : "~", r->level,
+				   r->snr, r->snr >= GREAT_SNR ? "*" : "",
+				   r->flags,
+				   r->age, r->est_throughput);
+#endif
+		} else {
+#ifdef CONFIG_IEEE80211AH
+			wpa_printf(MSG_EXCESSIVE, MACSTR
+				   " ssid=%s chan=%d qual=%d noise=%d level=%d flags=0x%x age=%u est=%u",
+				   MAC2STR(r->bssid),
+				   wpa_ssid_txt(ssid, ssid_len),
+				   morse_ht_freq_to_s1g_chan(r->freq, country),
+				   r->qual,
 				   r->noise, r->level, r->flags, r->age,
 				   r->est_throughput);
+#else
+			wpa_printf(MSG_EXCESSIVE, MACSTR
+				   " ssid=%s freq=%d freq_offset=%d qual=%d noise=%d level=%d flags=0x%x age=%u est=%u",
+				   MAC2STR(r->bssid),
+				   wpa_ssid_txt(ssid, ssid_len),
+				   r->freq, r->freq_offset, r->qual,
+				   r->noise, r->level, r->flags, r->age,
+				   r->est_throughput);
+#endif
 		}
 		pos = (u8 *) (r + 1);
 		if (r->ie_len)
@@ -3469,7 +3602,7 @@ wpa_supplicant_get_scan_results(struct wpa_supplicant *wpa_s,
 		qsort(scan_res->res, scan_res->num,
 		      sizeof(struct wpa_scan_res *), compar);
 	}
-	dump_scan_res(scan_res);
+	dump_scan_res(scan_res, wpa_s);
 
 	if (wpa_s->ignore_post_flush_scan_res) {
 		/* FLUSH command aborted an ongoing scan and these are the
@@ -3638,6 +3771,8 @@ wpa_scan_clone_params(const struct wpa_driver_scan_params *src)
 	params->p2p_include_6ghz = src->p2p_include_6ghz;
 	params->non_coloc_6ghz = src->non_coloc_6ghz;
 	params->min_probe_req_content = src->min_probe_req_content;
+	params->freq_offset = src->freq_offset;
+	params->min_scan_timeout = src->min_scan_timeout;
 	return params;
 
 failed:

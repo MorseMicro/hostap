@@ -1,6 +1,7 @@
 /*
  * wpa_supplicant/hostapd / common helper functions, etc.
  * Copyright (c) 2002-2019, Jouni Malinen <j@w1.fi>
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -11,7 +12,31 @@
 
 #include "common/ieee802_11_defs.h"
 #include "common.h"
+#include "drivers/nl80211_copy.h"
 
+/* Functions defined as inline in common.h: */
+extern u16 WPA_GET_BE16(const u8 *a);
+extern void WPA_PUT_BE16(u8 *a, u16 val);
+extern u16 WPA_GET_LE16(const u8 *a);
+extern void WPA_PUT_LE16(u8 *a, u16 val);
+extern u32 WPA_GET_BE24(const u8 *a);
+extern void WPA_PUT_BE24(u8 *a, u32 val);
+extern u32 WPA_GET_LE24(const u8 *a);
+extern void WPA_PUT_LE24(u8 *a, u32 val);
+extern u32 WPA_GET_BE32(const u8 *a);
+extern void WPA_PUT_BE32(u8 *a, u32 val);
+extern u32 WPA_GET_LE32(const u8 *a);
+extern void WPA_PUT_LE32(u8 *a, u32 val);
+extern u64 WPA_GET_LE48(const u8 *a);
+extern void WPA_PUT_LE48(u8 *a, u64 val);
+extern u64 WPA_GET_BE64(const u8 *a);
+extern void WPA_PUT_BE64(u8 *a, u64 val);
+extern u64 WPA_GET_LE64(const u8 *a);
+extern void WPA_PUT_LE64(u8 *a, u64 val);
+extern int is_zero_ether_addr(const u8 *a);
+extern int is_broadcast_ether_addr(const u8 *a);
+extern int is_multicast_ether_addr(const u8 *a);
+extern bool ether_addr_equal(const u8 *a, const u8 *b);
 
 int hex2num(char c)
 {
@@ -605,6 +630,7 @@ size_t printf_decode(u8 *buf, size_t maxlen, const char *str)
 }
 
 
+#ifndef MM_IOT_REENTRANT
 /**
  * wpa_ssid_txt - Convert SSID to a printable string
  * @ssid: SSID (32-octet string)
@@ -631,6 +657,7 @@ const char * wpa_ssid_txt(const u8 *ssid, size_t ssid_len)
 	printf_encode(ssid_txt, sizeof(ssid_txt), ssid, ssid_len);
 	return ssid_txt;
 }
+#endif
 
 
 void * __hide_aliasing_typecast(void *foo)
@@ -1285,7 +1312,7 @@ int str_starts(const char *str, const char *start)
 /**
  * rssi_to_rcpi - Convert RSSI to RCPI
  * @rssi: RSSI to convert
- * Returns: RCPI corresponding to the given RSSI value, or 255 if not available.
+ * Returns: RCPI corresponding to the given RSSI value.
  *
  * It's possible to estimate RCPI based on RSSI in dBm. This calculation will
  * not reflect the correct value for high rates, but it's good enough for Action
@@ -1293,11 +1320,9 @@ int str_starts(const char *str, const char *start)
  */
 u8 rssi_to_rcpi(int rssi)
 {
-	if (!rssi)
-		return 255; /* not available */
 	if (rssi < -110)
 		return 0;
-	if (rssi > 0)
+	if (rssi >= 0)
 		return 220;
 	return (rssi + 110) * 2;
 }
@@ -1328,20 +1353,54 @@ char * get_param(const char *cmd, const char *param)
 }
 
 
-/* Try to prevent most compilers from optimizing out clearing of memory that
- * becomes unaccessible after this function is called. This is mostly the case
- * for clearing local stack variables at the end of a function. This is not
- * exactly perfect, i.e., someone could come up with a compiler that figures out
- * the pointer is pointing to memset and then end up optimizing the call out, so
- * try go a bit further by storing the first octet (now zero) to make this even
- * a bit more difficult to optimize out. Once memset_s() is available, that
- * could be used here instead. */
-static void * (* const volatile memset_func)(void *, int, size_t) = memset;
-static u8 forced_memzero_val;
-
 void forced_memzero(void *ptr, size_t len)
 {
-	memset_func(ptr, 0, len);
-	if (len)
-		forced_memzero_val = ((u8 *) ptr)[0];
+#if defined __clang__
+	/* Clears memory and uses a compiler memory barrier to prevent the compiler
+	 * from optimizing out the memset call
+	 */
+	memset(ptr, 0, len);
+	__asm__ volatile ("" : : "g"(ptr) : "memory");
+#else
+	explicit_bzero(ptr, len);
+#endif
+}
+
+
+/* Borrowed from iw to convert a HT channel to frequency for use in S1G/HT
+ * mappings based on Morse driver */
+int ieee80211_channel_to_frequency(int chan, enum nl80211_band band)
+{
+	/* see 802.11 17.3.8.3.2 and Annex J
+	 * there are overlapping channel numbers in 5GHz and 2GHz bands */
+	if (chan <= 0)
+		return 0; /* not supported */
+	switch (band) {
+	case NL80211_BAND_2GHZ:
+		if (chan == 14)
+			return 2484;
+		else if (chan < 14)
+			return 2407 + chan * 5;
+		break;
+	case NL80211_BAND_5GHZ:
+		if (chan >= 182 && chan <= 196)
+			return 4000 + chan * 5;
+		else
+			return 5000 + chan * 5;
+		break;
+	case NL80211_BAND_6GHZ:
+		/* see 802.11ax D6.1 27.3.23.2 */
+		if (chan == 2)
+			return 5935;
+		if (chan <= 253)
+			return 5950 + chan * 5;
+		break;
+	case NL80211_BAND_60GHZ:
+		if (chan < 7)
+			return 56160 + chan * 2160;
+		break;
+	default:
+		;
+	}
+	return 0; /* not supported */
 }

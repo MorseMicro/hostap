@@ -1,6 +1,7 @@
 /*
  * WPA Supplicant / Control interface (shared code for all backends)
  * Copyright (c) 2004-2024, Jouni Malinen <j@w1.fi>
+ * Copyright 2023 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -62,6 +63,10 @@
 #include "sme.h"
 #include "nan_usd.h"
 #include "pr_supplicant.h"
+
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+#include "morse.h"
+#endif /* CONFIG_MORSE_5GHZ_MAPPED */
 
 #ifdef __NetBSD__
 #include <net/if_ether.h>
@@ -2394,9 +2399,15 @@ static int wpa_supplicant_ctrl_iface_status(struct wpa_supplicant *wpa_s,
 			pos += ap_ctrl_iface_wpa_get_status(wpa_s, pos,
 							    end - pos,
 							    verbose);
-		} else
+		} else {
 #endif /* CONFIG_AP */
-		pos += wpa_sm_get_status(wpa_s->wpa, pos, end - pos, verbose);
+			if (wpa_s->ifmsh)
+				pos += mesh_iface_wpa_get_status(wpa_s, pos, end - pos);
+			else
+				pos += wpa_sm_get_status(wpa_s->wpa, pos, end - pos, verbose);
+#ifdef CONFIG_AP
+		}
+#endif /* CONFIG_AP */
 	}
 #ifdef CONFIG_SME
 #ifdef CONFIG_SAE
@@ -7907,7 +7918,8 @@ static void p2p_ctrl_flush(struct wpa_supplicant *wpa_s)
 #ifdef CONFIG_TESTING_OPTIONS
 	os_free(wpa_s->get_pref_freq_list_override);
 	wpa_s->get_pref_freq_list_override = NULL;
-	p2p_set_invitation_op_freq(wpa_s->global->p2p, -1);
+	if (wpa_s->global->p2p)
+		p2p_set_invitation_op_freq(wpa_s->global->p2p, -1);
 #endif /* CONFIG_TESTING_OPTIONS */
 
 	wpas_p2p_stop_find(wpa_s);
@@ -9302,7 +9314,7 @@ static int wpas_ctrl_radio_work_add(struct wpa_supplicant *wpa_s, char *cmd,
 		wpa_s->ext_work_id++;
 	ework->id = wpa_s->ext_work_id;
 
-	if (radio_add_work(wpa_s, freq, ework->type, 0, wpas_ctrl_radio_work_cb,
+	if (radio_add_work(wpa_s, freq, 0, ework->type, 0, wpas_ctrl_radio_work_cb,
 			   ework) < 0) {
 		os_free(ework);
 		return -1;
@@ -9420,6 +9432,7 @@ static void wpas_ctrl_scan(struct wpa_supplicant *wpa_s, char *params,
 	unsigned int scan_only = 0;
 	unsigned int scan_id_count = 0;
 	unsigned int manual_non_coloc_6ghz = 0;
+	unsigned int next_scan_dwell_duration = 0;
 	int scan_id[MAX_SCAN_ID];
 	void (*scan_res_handler)(struct wpa_supplicant *wpa_s,
 				 struct wpa_scan_results *scan_res);
@@ -9465,6 +9478,10 @@ static void wpas_ctrl_scan(struct wpa_supplicant *wpa_s, char *params,
 		pos = os_strstr(params, "passive=");
 		if (pos)
 			manual_scan_passive = !!atoi(pos + 8);
+
+		pos = os_strstr(params, "dwell=");
+		if (pos)
+			next_scan_dwell_duration = atoi(pos + 6);
 
 		pos = os_strstr(params, "use_id=");
 		if (pos)
@@ -9567,6 +9584,7 @@ static void wpas_ctrl_scan(struct wpa_supplicant *wpa_s, char *params,
 	    ((wpa_s->wpa_state <= WPA_SCANNING) ||
 	     (wpa_s->wpa_state == WPA_COMPLETED))) {
 		wpa_s->manual_scan_passive = manual_scan_passive;
+		wpa_s->next_scan_dwell_duration = next_scan_dwell_duration;
 		wpa_s->manual_scan_use_id = manual_scan_use_id;
 		wpa_s->manual_scan_only_new = manual_scan_only_new;
 		wpa_s->scan_id_count = scan_id_count;
@@ -9591,6 +9609,7 @@ static void wpas_ctrl_scan(struct wpa_supplicant *wpa_s, char *params,
 		}
 	} else if (wpa_s->sched_scanning) {
 		wpa_s->manual_scan_passive = manual_scan_passive;
+		wpa_s->next_scan_dwell_duration = next_scan_dwell_duration;
 		wpa_s->manual_scan_use_id = manual_scan_use_id;
 		wpa_s->manual_scan_only_new = manual_scan_only_new;
 		wpa_s->scan_id_count = scan_id_count;
@@ -9626,15 +9645,19 @@ done:
 #ifdef CONFIG_TESTING_OPTIONS
 
 static void wpas_ctrl_iface_mgmt_tx_cb(struct wpa_supplicant *wpa_s,
-				       unsigned int freq, const u8 *dst,
+				       unsigned int freq,
+				       unsigned int freq_offset,
+				       const u8 *dst,
 				       const u8 *src, const u8 *bssid,
 				       const u8 *data, size_t data_len,
 				       enum offchannel_send_action_result
 				       result)
 {
-	wpa_msg(wpa_s, MSG_INFO, "MGMT-TX-STATUS freq=%u dst=" MACSTR
-		" src=" MACSTR " bssid=" MACSTR " result=%s",
-		freq, MAC2STR(dst), MAC2STR(src), MAC2STR(bssid),
+	wpa_msg(wpa_s, MSG_INFO, "MGMT-TX-STATUS freq=%u freq_offset=%u"
+		" dst=" MACSTR " src=" MACSTR " bssid=" MACSTR
+		" result=%s",
+		freq, freq_offset,
+		MAC2STR(dst), MAC2STR(src), MAC2STR(bssid),
 		result == OFFCHANNEL_SEND_ACTION_SUCCESS ?
 		"SUCCESS" : (result == OFFCHANNEL_SEND_ACTION_NO_ACK ?
 			     "NO_ACK" : "FAILED"));
@@ -9647,10 +9670,10 @@ static int wpas_ctrl_iface_mgmt_tx(struct wpa_supplicant *wpa_s, char *cmd)
 	size_t len;
 	u8 *buf, da[ETH_ALEN], bssid[ETH_ALEN];
 	int res, used;
-	int freq = 0, no_cck = 0, wait_time = 0;
+	int freq = 0, freq_offset = 0, no_cck = 0, wait_time = 0;
 
-	/* <DA> <BSSID> [freq=<MHz>] [wait_time=<ms>] [no_cck=1]
-	 *    <action=Action frame payload> */
+	/* <DA> <BSSID> [freq=<MHz>] [freq_offset=<KHz>] [wait_time=<ms>]
+	 *    [no_cck=1] <action=Action frame payload> */
 
 	wpa_printf(MSG_DEBUG, "External MGMT TX: %s", cmd);
 
@@ -9670,6 +9693,12 @@ static int wpas_ctrl_iface_mgmt_tx(struct wpa_supplicant *wpa_s, char *cmd)
 	if (param) {
 		param += 6;
 		freq = atoi(param);
+	}
+
+	param = os_strstr(pos, " freq_offset=");
+	if (param) {
+		param += 13;
+		freq_offset = atoi(param);
 	}
 
 	param = os_strstr(pos, " no_cck=");
@@ -9703,7 +9732,8 @@ static int wpas_ctrl_iface_mgmt_tx(struct wpa_supplicant *wpa_s, char *cmd)
 		return -1;
 	}
 
-	res = offchannel_send_action(wpa_s, freq, da, wpa_s->own_addr, bssid,
+	res = offchannel_send_action(wpa_s, freq, freq_offset, da,
+				     wpa_s->own_addr, bssid,
 				     buf, len, wait_time,
 				     wpas_ctrl_iface_mgmt_tx_cb, no_cck);
 	os_free(buf);
@@ -10536,6 +10566,7 @@ static int wpas_ctrl_resend_assoc(struct wpa_supplicant *wpa_s)
 	params.ssid = wpa_s->sme.ssid;
 	params.ssid_len = wpa_s->sme.ssid_len;
 	params.freq.freq = wpa_s->sme.freq;
+	params.freq.freq_offset = wpa_s->sme.freq_offset;
 	if (wpa_s->last_assoc_req_wpa_ie) {
 		params.wpa_ie = wpabuf_head(wpa_s->last_assoc_req_wpa_ie);
 		params.wpa_ie_len = wpabuf_len(wpa_s->last_assoc_req_wpa_ie);
@@ -12705,7 +12736,12 @@ static int wpas_ctrl_nan_publish(struct wpa_supplicant *wpa_s, char *cmd,
 	params.solicited = true;
 	/* USD shall require FSD without GAS */
 	params.fsd = true;
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+	params.freq = morse_s1g_get_first_center_freq_for_country(wpa_s->conf->country);
+	params.freq = morse_convert_s1g_freq_to_ht_freq(params.freq, wpa_s->conf->country);
+#else
 	params.freq = NAN_USD_DEFAULT_FREQ;
+#endif /* CONFIG_MORSE_5GHZ_MAPPED */
 
 	while ((token = str_token(cmd, " ", &context))) {
 		if (os_strncmp(token, "service_name=", 13) == 0) {
@@ -12720,6 +12756,10 @@ static int wpas_ctrl_nan_publish(struct wpa_supplicant *wpa_s, char *cmd,
 
 		if (os_strncmp(token, "freq=", 5) == 0) {
 			params.freq = atoi(token + 5);
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+			params.freq = morse_convert_s1g_freq_to_ht_freq(params.freq,
+								wpa_s->conf->country);
+#endif /* CONFIG_MORSE_5GHZ_MAPPED */
 			continue;
 		}
 
@@ -12727,14 +12767,24 @@ static int wpas_ctrl_nan_publish(struct wpa_supplicant *wpa_s, char *cmd,
 			char *pos = token + 10;
 
 			if (os_strcmp(pos, "all") == 0) {
+#ifdef CONFIG_IEEE80211AH
+				wpa_printf(MSG_INFO, "CTRL: 'freq_list=all' not supported");
+				goto fail;
+#else
 				os_free(freq_list);
 				freq_list = wpas_nan_usd_all_freqs(wpa_s);
 				params.freq_list = freq_list;
 				continue;
+#endif /* CONFIG_IEEE80211AH */
 			}
 
 			while (pos && pos[0]) {
-				int_array_add_unique(&freq_list, atoi(pos));
+				int freq = atoi(pos);
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+				freq = morse_convert_s1g_freq_to_ht_freq(freq,
+								wpa_s->conf->country);
+#endif /* CONFIG_MORSE_5GHZ_MAPPED */
+				int_array_add_unique(&freq_list, freq);
 				pos = os_strchr(pos, ',');
 				if (pos)
 					pos++;
@@ -12902,7 +12952,12 @@ static int wpas_ctrl_nan_subscribe(struct wpa_supplicant *wpa_s, char *cmd,
 	bool p2p = false;
 
 	os_memset(&params, 0, sizeof(params));
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+	params.freq = morse_s1g_get_first_center_freq_for_country(wpa_s->conf->country);
+	params.freq = morse_convert_s1g_freq_to_ht_freq(params.freq, wpa_s->conf->country);
+#else
 	params.freq = NAN_USD_DEFAULT_FREQ;
+#endif /* CONFIG_MORSE_5GHZ_MAPPED */
 
 	while ((token = str_token(cmd, " ", &context))) {
 		if (os_strncmp(token, "service_name=", 13) == 0) {
@@ -12922,6 +12977,41 @@ static int wpas_ctrl_nan_subscribe(struct wpa_supplicant *wpa_s, char *cmd,
 
 		if (os_strncmp(token, "freq=", 5) == 0) {
 			params.freq = atoi(token + 5);
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+			params.freq = morse_convert_s1g_freq_to_ht_freq(params.freq,
+									wpa_s->conf->country);
+#endif /* CONFIG_MORSE_5GHZ_MAPPED */
+			continue;
+		}
+
+		if (os_strncmp(token, "freq_list=", 10) == 0) {
+			char *pos = token + 10;
+
+			if (os_strcmp(pos, "all") == 0) {
+#ifdef CONFIG_IEEE80211AH
+				wpa_printf(MSG_INFO, "CTRL: 'freq_list=all' not supported");
+				goto fail;
+#else
+				os_free(freq_list);
+				freq_list = wpas_nan_usd_all_freqs(wpa_s);
+				params.freq_list = freq_list;
+				continue;
+#endif /* CONFIG_IEEE80211AH */
+			}
+
+			while (pos && pos[0]) {
+				int freq = atoi(pos);
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+				freq = morse_convert_s1g_freq_to_ht_freq(freq,
+									wpa_s->conf->country);
+#endif /* CONFIG_MORSE_5GHZ_MAPPED */
+				int_array_add_unique(&freq_list, freq);
+				pos = os_strchr(pos, ',');
+				if (pos)
+					pos++;
+			}
+
+			params.freq_list = freq_list;
 			continue;
 		}
 

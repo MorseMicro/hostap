@@ -306,10 +306,10 @@ static int wpa_driver_privsep_associate(
 	int res;
 	size_t buflen;
 
-	wpa_printf(MSG_DEBUG, "%s: priv=%p freq=%d pairwise_suite=%d "
+	wpa_printf(MSG_DEBUG, "%s: priv=%p freq=%d freq_offset=%d pairwise_suite=%d "
 		   "group_suite=%d key_mgmt_suite=%d auth_alg=%d mode=%d",
-		   __func__, priv, params->freq.freq, params->pairwise_suite,
-		   params->group_suite, params->key_mgmt_suite,
+		   __func__, priv, params->freq.freq, params->freq.freq_offset,
+		   params->pairwise_suite, params->group_suite, params->key_mgmt_suite,
 		   params->auth_alg, params->mode);
 
 	buflen = sizeof(*data) + params->wpa_ie_len;
@@ -323,6 +323,7 @@ static int wpa_driver_privsep_associate(
 	data->ssid_len = params->ssid_len;
 	data->hwmode = params->freq.mode;
 	data->freq = params->freq.freq;
+	data->freq_offset = params->freq.freq_offset;
 	data->channel = params->freq.channel;
 	data->pairwise_suite = params->pairwise_suite;
 	data->group_suite = params->group_suite;

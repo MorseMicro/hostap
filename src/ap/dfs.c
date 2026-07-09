@@ -2,6 +2,7 @@
  * DFS - Dynamic Frequency Selection
  * Copyright (c) 2002-2013, Jouni Malinen <j@w1.fi>
  * Copyright (c) 2013-2017, Qualcomm Atheros, Inc.
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -458,8 +459,9 @@ static int dfs_check_chans_radar(struct hostapd_iface *iface,
 	mode = iface->current_mode;
 
 	for (i = 0; i < n_chans; i++) {
-		if (start_chan_idx + i >= mode->num_channels)
+		if ((start_chan_idx + i) >= mode->num_channels)
 			break;
+
 		channel = &mode->channels[start_chan_idx + i];
 		if (channel->flag & HOSTAPD_CHAN_RADAR)
 			res++;
@@ -1013,7 +1015,7 @@ static int hostapd_dfs_request_channel_switch(struct hostapd_iface *iface,
 #endif /* CONFIG_MESH */
 	err = hostapd_set_freq_params(&csa_settings.freq_params,
 				      iface->conf->hw_mode,
-				      freq, channel,
+				      freq, 0, channel,
 				      iface->conf->enable_edmg,
 				      iface->conf->edmg_channel,
 				      iface->conf->ieee80211n,
@@ -1137,7 +1139,7 @@ hostapd_is_freq_in_current_hw_info(struct hostapd_iface *iface, int freq)
 	if (!iface->current_mode)
 		return false;
 
-	chan = hw_mode_get_channel(iface->current_mode, freq, NULL);
+	chan = hw_mode_get_channel(iface->current_mode, freq, 0, NULL);
 
 	/* If channel data is not found for the given frequency, consider it is
 	 * out of the current hardware info. */

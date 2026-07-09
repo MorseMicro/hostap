@@ -1,6 +1,7 @@
 /*
  * hostapd - Driver operations
  * Copyright (c) 2009-2010, Jouni Malinen <j@w1.fi>
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -23,6 +24,7 @@
 #include "wpa_auth.h"
 #include "hw_features.h"
 #include "ap_drv_ops.h"
+#include "utils/morse.h"
 
 
 u32 hostapd_sta_flags_to_drv(u32 flags)
@@ -653,7 +655,8 @@ int hostapd_flush(struct hostapd_data *hapd)
 
 
 int hostapd_set_freq(struct hostapd_data *hapd, enum hostapd_hw_mode mode,
-		     int freq, int channel, int edmg, u8 edmg_channel,
+		     int freq, int freq_offset, int channel,
+		     int edmg, u8 edmg_channel,
 		     int ht_enabled, int vht_enabled,
 		     int he_enabled, bool eht_enabled,
 		     int sec_channel_offset, int oper_chwidth,
@@ -662,7 +665,8 @@ int hostapd_set_freq(struct hostapd_data *hapd, enum hostapd_hw_mode mode,
 	struct hostapd_freq_params data;
 	struct hostapd_hw_modes *cmode = hapd->iface->current_mode;
 
-	if (hostapd_set_freq_params(&data, mode, freq, channel, edmg,
+	if (hostapd_set_freq_params(&data, mode, freq, freq_offset,
+				    channel, edmg,
 				    edmg_channel, ht_enabled,
 				    vht_enabled, he_enabled, eht_enabled,
 				    sec_channel_offset, oper_chwidth,
@@ -679,6 +683,14 @@ int hostapd_set_freq(struct hostapd_data *hapd, enum hostapd_hw_mode mode,
 		return 0;
 	if (hapd->driver->set_freq == NULL)
 		return 0;
+
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+	if (hapd->iface->conf->ieee80211ah) {
+		/* Need to get the correct center channel and freq */
+		int ht_center_chan = morse_ht_chan_to_ht_chan_center(hapd->iface->conf, data.channel);
+		data.center_freq1 = ieee80211_channel_to_frequency(ht_center_chan, NL80211_BAND_5GHZ);
+	}
+#endif
 
 	data.link_id = -1;
 
@@ -898,7 +910,7 @@ int hostapd_drv_send_mlme(struct hostapd_data *hapd,
 
 	if (!hapd->driver || !hapd->driver->send_mlme || !hapd->drv_priv)
 		return 0;
-	return hapd->driver->send_mlme(hapd->drv_priv, msg, len, noack, 0,
+	return hapd->driver->send_mlme(hapd->drv_priv, msg, len, noack, 0, 0,
 				       csa_offs, csa_offs_len, no_encrypt, 0,
 				       link_id);
 }
@@ -1051,7 +1063,7 @@ static int hapd_drv_send_action(struct hostapd_data *hapd, unsigned int freq,
 #endif /* CONFIG_IEEE80211BE */
 	}
 
-	return hapd->driver->send_action(hapd->drv_priv, freq, wait, dst,
+	return hapd->driver->send_action(hapd->drv_priv, freq, 0, wait, dst,
 					 own_addr, bssid, data, len, 0,
 					 link_id);
 }
@@ -1109,7 +1121,7 @@ int hostapd_start_dfs_cac(struct hostapd_iface *iface,
 		return -1;
 	}
 
-	if (hostapd_set_freq_params(&data, mode, freq, channel, 0, 0,
+	if (hostapd_set_freq_params(&data, mode, freq, 0, channel, 0, 0,
 				    ht_enabled,
 				    vht_enabled, he_enabled, eht_enabled,
 				    sec_channel_offset,

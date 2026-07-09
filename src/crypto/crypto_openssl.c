@@ -2696,6 +2696,7 @@ int crypto_ec_point_cmp(const struct crypto_ec *e,
 }
 
 
+#if !defined(CONFIG_NO_STDOUT_DEBUG)
 void crypto_ec_point_debug_print(const struct crypto_ec *e,
 				 const struct crypto_ec_point *p,
 				 const char *title)
@@ -2723,6 +2724,7 @@ fail:
 	BN_free(x);
 	BN_free(y);
 }
+#endif /* !CONFIG_NO_STDOUT_DEBUG */
 
 
 struct crypto_ecdh {
@@ -4236,6 +4238,7 @@ int crypto_ec_key_cmp(struct crypto_ec_key *key1, struct crypto_ec_key *key2)
 }
 
 
+#if !defined(CONFIG_NO_STDOUT_DEBUG)
 void crypto_ec_key_debug_print(const struct crypto_ec_key *key,
 			       const char *title)
 {
@@ -4261,6 +4264,7 @@ void crypto_ec_key_debug_print(const struct crypto_ec_key *key,
 	}
 	BIO_free(out);
 }
+#endif /* !CONFIG_NO_STDOUT_DEBUG */
 
 
 struct wpabuf * crypto_pkcs7_get_certificates(const struct wpabuf *pkcs7)

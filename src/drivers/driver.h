@@ -1,6 +1,7 @@
 /*
  * Driver interface definition
  * Copyright (c) 2003-2017, Jouni Malinen <j@w1.fi>
+ * Copyright 2023 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -27,6 +28,11 @@
 #include "pae/ieee802_1x_kay.h"
 #endif /* CONFIG_MACSEC */
 #include "utils/list.h"
+#if defined(CONFIG_DRIVER_NL80211_MORSE) || defined(MM_IOT)
+enum morse_cmd_param_action;
+enum morse_cmd_param_id;
+struct morse_twt;
+#endif /* CONFIG_DRIVER_NL80211_MORSE || MM_IOT */
 
 struct nan_subscribe_params;
 struct nan_publish_params;
@@ -62,6 +68,11 @@ enum hostapd_chan_width_attr {
 	HOSTAPD_CHAN_WIDTH_80   = BIT(4),
 	HOSTAPD_CHAN_WIDTH_160  = BIT(5),
 	HOSTAPD_CHAN_WIDTH_320  = BIT(6),
+	HOSTAPD_CHAN_WIDTH_1    = BIT(7),
+	HOSTAPD_CHAN_WIDTH_2    = BIT(8),
+	HOSTAPD_CHAN_WIDTH_4    = BIT(9),
+	HOSTAPD_CHAN_WIDTH_8    = BIT(10),
+	HOSTAPD_CHAN_WIDTH_16   = BIT(11),
 };
 
 /* Filter gratuitous ARP */
@@ -124,6 +135,11 @@ struct hostapd_channel_data {
 	 * freq - Frequency in MHz
 	 */
 	int freq;
+
+	/**
+	 * freq_offset - Frequency offset from @freq in KHz
+	 */
+	int freq_offset;
 
 	/**
 	 * flag - Channel flags (HOSTAPD_CHAN_*)
@@ -325,6 +341,11 @@ struct hostapd_hw_modes {
 	 * eht_capab - EHT (IEEE 802.11be) capabilities
 	 */
 	struct eht_capabilities eht_capab[IEEE80211_MODE_NUM];
+
+	/**
+	 * s1g_capab - S1G (IEEE 802.11ah) capabilities
+	 */
+	struct ieee80211_s1g_capabilities s1g_capab;
 };
 
 
@@ -372,6 +393,7 @@ struct hostapd_multi_hw_info {
  * @flags: information flags about the BSS/IBSS (WPA_SCAN_*)
  * @bssid: BSSID
  * @freq: frequency of the channel in MHz (e.g., 2412 = channel 1)
+ * @freq: frequency offset of the channel from @freq in KHz
  * @max_cw: the max channel width of the connection (calculated during scan
  * result processing)
  * @beacon_int: beacon interval in TUs (host byte order)
@@ -410,6 +432,7 @@ struct wpa_scan_res {
 	unsigned int flags;
 	u8 bssid[ETH_ALEN];
 	int freq;
+	int freq_offset;
 	enum chan_width max_cw;
 	u16 beacon_int;
 	u16 caps;
@@ -515,6 +538,13 @@ struct wpa_driver_scan_params {
 	 * The frequency is set in MHz. The array is zero-terminated.
 	 */
 	int *freqs;
+
+	/**
+	 * freq_offset - freq offset in KHz
+	 *
+	 * Each @freqs value will have this frequency offset applied
+	 */
+	int freq_offset;
 
 	/**
 	 * filter_ssids - Filter for reporting SSIDs
@@ -741,6 +771,12 @@ struct wpa_driver_scan_params {
 	 */
 	s8 link_id;
 
+	/**
+	 * min_scan_timeout - The minimum time to wait before cancelling a scan (seconds). 0 to use
+	 * defaults.
+	 */
+	u32 min_scan_timeout;
+
 	/*
 	 * NOTE: Whenever adding new parameters here, please make sure
 	 * wpa_scan_clone_params() and wpa_scan_free_params() get updated with
@@ -754,6 +790,7 @@ struct wpa_driver_scan_params {
  */
 struct wpa_driver_auth_params {
 	int freq;
+	int freq_offset;
 	const u8 *bssid;
 	const u8 *ssid;
 	size_t ssid_len;
@@ -821,6 +858,41 @@ enum wps_mode {
 };
 
 /**
+ * struct hostapd_s1g_freq_params - S1G Channel parameters
+ */
+struct hostapd_s1g_freq_params {
+	/**
+	 * s1g_global_op_class - Global operating class
+	 */
+	int s1g_global_op_class;
+
+	/**
+	 * s1g_prim_bw - Primary channel bandwidth
+	 */
+	int s1g_prim_bw;
+
+	/**
+	 * s1g_prim_channel_index_1MHz - Index of primary 1MHz channel
+	 */
+	int s1g_prim_channel_index_1MHz;
+
+	/**
+	 * s1g_oper_freq - New S1g Operating frequency
+	 */
+	int s1g_oper_freq;
+
+	/**
+	 * s1g_oper_bw - New S1g Operating channel bandwidth
+	 */
+	int s1g_oper_bw;
+
+	/**
+	 * s1g_prim_ch_global_op_class - Global operating class for primary chan
+	 */
+	int s1g_prim_ch_global_op_class;
+};
+
+/**
  * struct hostapd_freq_params - Channel parameters
  */
 struct hostapd_freq_params {
@@ -833,6 +905,11 @@ struct hostapd_freq_params {
 	 * freq - Primary channel center frequency in MHz
 	 */
 	int freq;
+
+	/**
+	 * freq_offset - Frequency offset in KHz from @freq
+	 */
+	int freq_offset;
 
 	/**
 	 * channel - Channel number
@@ -871,6 +948,13 @@ struct hostapd_freq_params {
 	int center_freq1;
 
 	/**
+	 * center_freq1_offset - Segment 0 center frequency offset in KHz
+	 *
+	 * Valid for S1G.
+	 */
+	int center_freq1_offset;
+
+	/**
 	 * center_freq2 - Segment 1 center frequency in MHz
 	 *
 	 * Non-zero only for bandwidth 80 and an 80+80 channel
@@ -887,6 +971,13 @@ struct hostapd_freq_params {
 	 * for IEEE 802.11ay EDMG configuration.
 	 */
 	struct ieee80211_edmg_config edmg;
+
+#ifdef CONFIG_IEEE80211AH
+	/**
+	 * prim_bandwidth - S1G Primary Channel bandwidth in MHz (1 or 2)
+	 */
+	int prim_bandwidth;
+#endif /* CONFIG_IEEE80211AH */
 
 	/**
 	 * radar_background - Whether radar/CAC background is requested
@@ -1933,6 +2024,9 @@ struct wpa_driver_mesh_bss_params {
 #define WPA_DRIVER_MESH_CONF_FLAG_HT_OP_MODE		0x00000008
 #define WPA_DRIVER_MESH_CONF_FLAG_RSSI_THRESHOLD	0x00000010
 #define WPA_DRIVER_MESH_CONF_FLAG_FORWARDING		0x00000020
+#define WPA_DRIVER_MESH_CONF_FLAG_ROOTMODE		0x00000040
+#define WPA_DRIVER_MESH_CONF_FLAG_GATE_ANNOUNCEMENTS	0x00000080
+#define WPA_DRIVER_MESH_CONF_FLAG_NOLEARN		0x00000100
 	/*
 	 * TODO: Other mesh configuration parameters would go here.
 	 * See NL80211_MESHCONF_* for all the mesh config parameters.
@@ -1943,7 +2037,10 @@ struct wpa_driver_mesh_bss_params {
 	int max_peer_links;
 	int rssi_threshold;
 	int forwarding;
+	int nolearn;
 	u16 ht_opmode;
+	int dot11MeshHWMPRootMode;
+	int dot11MeshGateAnnouncements;
 };
 
 struct wpa_driver_mesh_join_params {
@@ -2658,6 +2755,7 @@ struct hostapd_sta_add_params {
 	const struct ieee80211_he_6ghz_band_cap *he_6ghz_capab;
 	const struct ieee80211_eht_capabilities *eht_capab;
 	size_t eht_capab_len;
+	const struct ieee80211_s1g_capabilities *s1g_capab;
 	u32 flags; /* bitmask of WPA_STA_* flags */
 	u32 flags_mask; /* unset bits in flags */
 #ifdef CONFIG_MESH
@@ -2880,6 +2978,9 @@ struct csa_settings {
 	u8 block_tx;
 
 	struct hostapd_freq_params freq_params;
+#ifdef CONFIG_IEEE80211AH
+	struct hostapd_s1g_freq_params s1g_freq_params;
+#endif /* CONFIG_IEEE80211AH */
 	struct beacon_data beacon_csa;
 	struct beacon_data beacon_after;
 
@@ -3559,6 +3660,7 @@ struct wpa_driver_ops {
 	 * @noack: Do not wait for this frame to be acked (disable retries)
 	 * @freq: Frequency (in MHz) to send the frame on, or 0 to let the
 	 * driver decide
+	 * @freq_offset: Frequency offset (in KHz) from @freq to send the frame on
 	 * @csa_offs: Array of CSA offsets or %NULL
 	 * @csa_offs_len: Number of elements in csa_offs
 	 * @no_encrypt: Do not encrypt frame even if appropriate key exists
@@ -3568,8 +3670,8 @@ struct wpa_driver_ops {
 	 * Returns: 0 on success, -1 on failure
 	 */
 	int (*send_mlme)(void *priv, const u8 *data, size_t data_len,
-			 int noack, unsigned int freq, const u16 *csa_offs,
-			 size_t csa_offs_len, int no_encrypt,
+			 int noack, unsigned int freq, unsigned int freq_offset,
+			 const u16 *csa_offs, size_t csa_offs_len, int no_encrypt,
 			 unsigned int wait, int link_id);
 
 	/**
@@ -4197,6 +4299,7 @@ struct wpa_driver_ops {
 	 * send_action - Transmit an Action frame
 	 * @priv: Private driver interface data
 	 * @freq: Frequency (in MHz) of the channel
+	 * @freq_offset: Frequency offset from @freq in KHz
 	 * @wait: Time to wait off-channel for a response (in ms), or zero
 	 * @dst: Destination MAC address (Address 1)
 	 * @src: Source MAC address (Address 2)
@@ -4225,7 +4328,8 @@ struct wpa_driver_ops {
 	 * If @src differs from the device MAC address, use of a random
 	 * transmitter address is requested for this message exchange.
 	 */
-	int (*send_action)(void *priv, unsigned int freq, unsigned int wait,
+	int (*send_action)(void *priv, unsigned int freq,
+			   unsigned int freq_offset, unsigned int wait,
 			   const u8 *dst, const u8 *src, const u8 *bssid,
 			   const u8 *data, size_t data_len, int no_cck,
 			   int link_id);
@@ -4244,6 +4348,7 @@ struct wpa_driver_ops {
 	 * remain_on_channel - Remain awake on a channel
 	 * @priv: Private driver interface data
 	 * @freq: Frequency (in MHz) of the channel
+	 * @freq_offset: Frequency offset from @freq in KHz
 	 * @duration: Duration in milliseconds
 	 * Returns: 0 on success, -1 on failure
 	 *
@@ -4263,7 +4368,7 @@ struct wpa_driver_ops {
 	 * executed.
 	 */
 	int (*remain_on_channel)(void *priv, unsigned int freq,
-				 unsigned int duration);
+				 unsigned int freq_offset, unsigned int duration);
 
 	/**
 	 * cancel_remain_on_channel - Cancel remain-on-channel operation
@@ -5541,6 +5646,166 @@ struct wpa_driver_ops {
 	 */
 	struct hostapd_multi_hw_info *
 	(*get_multi_hw_info)(void *priv, unsigned int *num_multi_hws);
+
+#if defined(CONFIG_DRIVER_NL80211_MORSE) || defined(MM_IOT)
+	/**
+	 * set_bss_color - Configure the BSS color for the network
+	 * @priv: Private driver interface data
+	 * @s1g_bss_color: The BSS color to be assigned to the network
+	 * Returns 0 on success, -1 on failure
+	 */
+	int (*set_bss_color)(void *priv, u8 s1g_bss_color);
+
+	/**
+	 * set_s1g_op_class - Set S1G operating class
+	 * @priv: Private driver interface data
+	 * @opclass: The S1G operating class
+	 * @prim_opclass: Primary operating class
+	 * Returns 0 on success, -1 on failure
+	 */
+	int (*set_s1g_op_class)(void *priv, u8 opclass, u8 prim_opclass);
+
+	/**
+	 * set_channel - Set channel parameters
+	 * @priv: Private driver interface data
+	 * @oper_freq: Operating center frequency in kHz
+	 * @oper_chwidth: Operating bandwidth in MHz
+	 * @prim_chwidth: Primary channel width in MHz
+	 * @prim_1mhz_ch_idx: Primary 1MHz channel index
+	 * Returns 0 on success, -1 on failure
+	 */
+	int (*set_s1g_channel)(void *priv, int oper_freq, int oper_chwidth, u8 prim_chwidth,
+			u8 prim_1mhz_ch_idx);
+
+	/**
+	 * set_ecsa_parameters - Set ECSA parameters
+	 * @priv: Private driver interface data
+	 * @global_oper_class: Global operating class for the operating country
+	 * @prim_chwidth: Primary channel width in MHz (1, 2)
+	 * @oper_chwidth: Operating channel width in MHz (1, 2, 4, 8)
+	 * @oper_freq: Frequency of operating channel in kHz
+	 * @prim_1mhz_ch_idx: 1MHz channel index of primary channel
+	 * @prim_global_op_class: Global operating class for primary channel
+	 * @s1g_capab: User configured S1G capabilities
+	 * Returns 0 on success, -1 on failure
+	 */
+	int (*set_ecsa_parameters)(void *priv, u8 global_oper_class, u8 prim_chwidth,
+				int oper_chwidth, int oper_freq, u8 prim_1mhz_ch_idx,
+				u8 prim_global_op_class, u32 s1g_capab);
+
+	/**
+	 * set_bssid_info - Set BSSID information
+	 * @priv: Private driver interface data
+	 * @tx_iface: Transmitting-interface index
+	 * @max_bss_index: Highest BSSID index
+	 * Returns 0 on success, -1 on failure
+	 */
+	int (*set_mbssid_info)(void *priv, const char *tx_iface, u8 max_bss_index);
+
+	/**
+	 * set_keep_alive - Set/Offload the BSS keep-alive frames
+	 * @priv: Private driver interface data
+	 * @bss_max_idle_period: The BSS max idle period as derived directly
+	 *				from the WLAN_EID_BSS_MAX_IDLE_PERIOD
+	 * @as_11ah: Intepret BSS max idle period as per the 11ah spec.
+	 * Returns 0 on success, -1 on failure
+	 */
+	int (*set_keep_alive)(void *priv, u16 bss_max_idle_period, bool as_11ah);
+
+	/**
+	 * twt_conf - Set up parameters for TWT
+	 * @priv: Private driver interface data
+	 * @twt_config: TWT config structure
+	 * Returns 0 on success, -1 on failure
+	 */
+	int (*twt_conf)(void *priv, struct morse_twt *twt_config);
+
+	/**
+	 * cac_conf - Enable or disable CAC
+	 * @priv: Private driver interface data
+	 * @enable: True to enable CAC, false to disable
+	 * Returns 0 on success, -1 on failure
+	 */
+	int (*cac_conf)(void *priv, bool enable);
+
+	/**
+	 * set_mesh_config - Pass mesh configuration to driver
+	 * @priv: Private driver interface data
+	 * @mesh_id: Mesh ID for the mesh interface
+	 * @mesh_id_len: Length of Mesh ID
+	 * @beaconless_mode: Beaconless mode
+	 * @max_plinks: Maximum number of peer links
+	 * Returns 0 on success, -1 on failure
+	 */
+	int (*set_mesh_config)(void *priv, u8 *mesh_id, u8 mesh_id_len,
+		u8 beaconless_mode, u8 max_plinks);
+
+	/**
+	 * mbca_conf - Configure MBCA parameters
+	 * @priv: Private driver interface data
+	 * @mbca_config: MBCA Configuration
+	 * @min_beacon_gap: Minimum gap between our's and neighbor beacon.
+	 * @tbtt_adj_interval: TBTT adjustment interval.
+	 * @beacon_timing_report_int: Beacon Timing report interval.
+	 * @mbss_start_scan_duration: Initial scan duration to find other peers in MBSS
+	 * Returns 0 on success, -1 on failure
+	 */
+	int (*mbca_conf)(void *priv, u8 mbca_config, u8 min_beacon_gap, u8 tbtt_adj_interval,
+		u8 beacon_timing_report_interval, u16 mbss_start_scan_duration);
+
+	/**
+	 * set_mesh_dynamic_peering - Enable/Disable and configure mesh dynamic peering
+	 * @priv: Private driver interface data
+	 * @enabled: True to enable dynamic peering, false to disable dynamic peering
+	 * @rssi_margin: RSSI margin to consider while selecting a peer to kickout.
+	 * @blacklist_timeout: Duration in seconds, a kicked out peer is blacklisted.
+	 * Returns 0 on success, -1 on failure
+	 */
+	int (*set_mesh_dynamic_peering)(void *priv, bool enabled, u8 rssi_margin,
+		u32 blacklist_timeout);
+
+	/**
+	 * raw_global_enable - Enable or disable RAW global
+	 * @priv: Private driver interface data
+	 * @enable: Enable or disable raw
+	 * Returns 0 on success, -1 on failure
+	 */
+	int (*raw_global_enable)(void *priv, bool enable);
+
+	/**
+	 * raw_priority_enable - Enable/Disable and configure RAW priority
+	 * @priv: Private driver interface data
+	 * @enable: True to enable the priority, false to disable
+	 * @prio: Index of the priority
+	 * @start_time_us: Start time from last beacon or RAW
+	 * @duration_us: RAW duration time
+	 * @num_slots: Number of slots
+	 * @cross_slot: Cross slot boundary bleed allowed
+	 * @max_bcn_spread: Maximum beacons to spread over (0 for no limit)
+	 * @nom_stas_per_bcn: Nominal number of STAs per beacon (0 for no spreading)
+	 * @praw_period: The period of the PRAW in beacons (0 for PRAW disabled)
+	 * @praw_start_offset: The beacon offset of the PRAW within the period
+	 * Returns 0 on success, -1 on failure
+	 */
+	int (*raw_priority_enable)(void *priv, bool enable, u8 prio,
+		u32 start_time_us, u32 duration_us, u8 num_slots,
+		bool cross_slot, u16 max_bcn_spread, u16 nom_stas_per_bcn,
+		u8 praw_period, u8 praw_start_offset);
+
+	/**
+	 * param_get_set - Get and set parameters
+	 * @priv: Private driver interface data
+	 * @param_id: Parameter ID
+	 * @action: Get or set
+	 * @value_in: Value to be set
+	 * @value_out: Pointer to variable for value to get
+	 * Returns 0 on success, -1 on failure
+	 */
+	int (*param_get_set)(void *priv, enum morse_cmd_param_id param_id,
+				   enum morse_cmd_param_action action,
+				   u32 value_in,
+				   u32 *value_out);
+#endif /* CONFIG_DRIVER_NL80211_MORSE || MM_IOT */
 };
 
 /**
@@ -6335,6 +6600,11 @@ union wpa_event_data {
 		unsigned int freq;
 
 		/**
+		 * freq_offset - Frequency offset from @freq in KHz
+		 */
+		unsigned int freq_offset;
+
+		/**
 		 * wmm_params - WMM parameters used in this association.
 		 */
 		struct wmm_params wmm_params;
@@ -6719,6 +6989,11 @@ union wpa_event_data {
 		int freq;
 
 		/**
+		 * freq - Frequency offset (in KHz) from @freq on which the frame was received
+		 */
+		int freq_offset;
+
+		/**
 		 * ssi_signal - Signal strength in dBm (or 0 if not available)
 		 */
 		int ssi_signal;
@@ -6740,6 +7015,11 @@ union wpa_event_data {
 		 * freq - Channel frequency in MHz
 		 */
 		unsigned int freq;
+
+		/**
+		 * freq_offset - Frequency offset from @freq in KHz
+		 */
+		unsigned int freq_offset;
 
 		/**
 		 * duration - Duration to remain on the channel in milliseconds
@@ -6921,6 +7201,7 @@ union wpa_event_data {
 	/**
 	 * struct ch_switch
 	 * @freq: Frequency of new channel in MHz
+	 * @freq_offset: Frequency offset from @freq in KHz
 	 * @ht_enabled: Whether this is an HT channel
 	 * @ch_offset: Secondary channel offset
 	 * @ch_width: Channel width
@@ -6931,6 +7212,7 @@ union wpa_event_data {
 	 */
 	struct ch_switch {
 		int freq;
+		int freq_offset;
 		int ht_enabled;
 		int ch_offset;
 		enum chan_width ch_width;
@@ -7204,6 +7486,15 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
  */
 void wpa_supplicant_event_global(void *ctx, enum wpa_event_type event,
 				 union wpa_event_data *data);
+
+#if defined(CONFIG_MESH) && defined(CONFIG_IEEE80211AH)
+/**
+ * wpa_supplicant_mesh_peer_event - Handles UMAC driver's vendor event.
+ * @ctx:  supplicant context
+ * @peer_addr: mesh peer address
+ */
+void wpa_supplicant_mesh_peer_event(void *ctx, u8 *peer_addr);
+#endif
 
 /*
  * The following inline functions are provided for convenience to simplify
