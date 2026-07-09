@@ -1,6 +1,7 @@
 /*
  * Control interface for shared AP commands
  * Copyright (c) 2004-2019, Jouni Malinen <j@w1.fi>
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -26,6 +27,7 @@
 #include "mbo_ap.h"
 #include "taxonomy.h"
 #include "wnm_ap.h"
+#include "morse.h"
 
 
 static size_t hostapd_write_ht_mcs_bitmask(char *buf, size_t buflen,
@@ -224,6 +226,8 @@ static const char * hw_mode_str(enum hostapd_hw_mode mode)
 		return "a";
 	case HOSTAPD_MODE_IEEE80211AD:
 		return "ad";
+	case HOSTAPD_MODE_IEEE80211AH:
+		return "ah";
 	case HOSTAPD_MODE_IEEE80211ANY:
 		return "any";
 	case NUM_HOSTAPD_MODES:
@@ -804,6 +808,26 @@ int hostapd_ctrl_iface_status(struct hostapd_data *hapd, char *buf,
 	struct hostapd_config *iconf = hapd->iconf;
 	int len = 0, ret, j;
 	size_t i;
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+	int ht_chan = morse_ht_chan_to_ht_chan_center(iface->conf, iface->conf->channel);
+	int s1g_freq = morse_s1g_op_class_ht_chan_to_s1g_freq(iface->conf->s1g_op_class, ht_chan);
+	int s1g_bw = morse_s1g_op_class_to_ch_width(iface->conf->s1g_op_class);
+
+	ret = os_snprintf(buf + len, buflen - len,
+			  "s1g_freq=%d\n"
+			  "s1g_bw=%d\n"
+			  "s1g_prim_chwidth=%d\n"
+			  "s1g_prim_1mhz_chan_index=%u\n",
+			  s1g_freq,
+			  s1g_bw,
+			  iface->conf->s1g_prim_chwidth == S1G_PRIM_CHWIDTH_1 ? 1 :
+				iface->conf->s1g_prim_chwidth == S1G_PRIM_CHWIDTH_2 ? 2 : -1,
+			  iface->conf->s1g_prim_1mhz_chan_index);
+	if (os_snprintf_error(buflen - len, ret))
+		return len;
+	len += ret;
+
+#endif /* CONFIG_MORSE_5GHZ_MAPPED */
 
 	ret = os_snprintf(buf + len, buflen - len,
 			  "state=%s\n"
@@ -1158,6 +1182,9 @@ int hostapd_parse_freq_params(const char *pos,
 	SET_FREQ_PARAM(bandwidth);
 	SET_FREQ_PARAM(sec_channel_offset);
 	SET_FREQ_PARAM(punct_bitmap);
+#ifdef CONFIG_IEEE80211AH
+	SET_FREQ_PARAM(prim_bandwidth);
+#endif /* CONFIG_IEEE80211AH */
 	params->ht_enabled = !!os_strstr(pos, " ht");
 	params->vht_enabled = !!os_strstr(pos, " vht");
 	params->eht_enabled = !!os_strstr(pos, " eht");
@@ -1415,14 +1442,24 @@ int hostapd_parse_csa_settings(struct hostapd_iface *iface,
 {
 	struct hostapd_hw_modes *target_mode;
 	char *end;
+	u8 is_s1g_freq = 0;
+	long chan_switch_count;
 	int ret;
 
 	os_memset(settings, 0, sizeof(*settings));
-	settings->cs_count = strtol(pos, &end, 10);
+	chan_switch_count = strtol(pos, &end, 10);
 	if (pos == end) {
 		wpa_printf(MSG_ERROR, "chanswitch: invalid cs_count provided");
 		return -1;
 	}
+
+	if (chan_switch_count > UINT8_MAX) {
+		wpa_printf(MSG_ERROR, "chanswitch: invalid cs_count:%ld provided. Max=%u\n",
+			   chan_switch_count, UINT8_MAX);
+		return -1;
+	}
+
+	settings->cs_count = chan_switch_count;
 
 	settings->block_tx = !!os_strstr(pos, " blocktx");
 
@@ -1432,6 +1469,27 @@ int hostapd_parse_csa_settings(struct hostapd_iface *iface,
 				"chanswitch: failed to parse frequency parameters");
 		return ret;
 	}
+
+	/* Check if input frequency is s1g_frequency.
+	 * This check is necessary for interoperability with
+	 * ht frequencies as input. If the input is S1G frequency
+	 * then we do S1G to ht frequency conversions later
+	 */
+	if (settings->freq_params.center_freq1 > MIN_S1G_FREQ_KHZ &&
+		settings->freq_params.center_freq1 < MAX_S1G_FREQ_KHZ &&
+		settings->freq_params.freq > MIN_S1G_FREQ_KHZ &&
+		settings->freq_params.freq < MAX_S1G_FREQ_KHZ)
+	{
+		is_s1g_freq = 1;
+	}
+#ifdef CONFIG_IEEE80211AH
+	if (is_s1g_freq)
+	{
+		ret = morse_s1g_validate_csa_params(iface, settings);
+		if (ret)
+			return ret;
+	}
+#endif /* CONFIG_IEEE80211AH */
 
 	target_mode = get_target_hw_mode(iface, settings->freq_params.freq);
 	if (!target_mode) {
@@ -1462,7 +1520,13 @@ int hostapd_parse_csa_settings(struct hostapd_iface *iface,
 
 int hostapd_ctrl_iface_stop_ap(struct hostapd_data *hapd)
 {
-	return hostapd_drv_stop_ap(hapd);
+	struct hostapd_iface *iface = hapd->iface;
+	unsigned int i;
+
+	for (i = 0; i < iface->num_bss; i++)
+		hostapd_drv_stop_ap(iface->bss[i]);
+
+	return 0;
 }
 
 

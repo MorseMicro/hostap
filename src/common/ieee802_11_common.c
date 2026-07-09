@@ -1,6 +1,7 @@
 /*
  * IEEE 802.11 Common routines
  * Copyright (c) 2002-2019, Jouni Malinen <j@w1.fi>
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -603,6 +604,10 @@ static ParseRes __ieee802_11_parse_elems(const u8 *start, size_t len,
 			elems->ext_capab = pos;
 			elems->ext_capab_len = elen;
 			break;
+		case WLAN_EID_QOS_TRAFFIC_CAPABILITY:
+			elems->qos_traffic_cap = pos;
+			elems->qos_traffic_cap_len = elen;
+			break;
 		case WLAN_EID_BSS_MAX_IDLE_PERIOD:
 			if (elen < 3)
 				break;
@@ -672,6 +677,16 @@ static ParseRes __ieee802_11_parse_elems(const u8 *start, size_t len,
 			if (elen < 15)
 				break;
 			elems->s1g_capab = pos;
+			break;
+		case WLAN_EID_AID_RESPONSE:
+			if (elen < 5)
+				break;
+			elems->aid = pos;
+			break;
+		case WLAN_EID_S1G_MAX_AWAY_DURATION:
+			if (elen < 2)
+				break;
+			elems->max_away_duration = pos;
 			break;
 		case WLAN_EID_FRAGMENT:
 			wpa_printf(MSG_MSGDUMP,
@@ -862,6 +877,9 @@ void ieee802_11_elems_clear_ids(struct ieee802_11_elems *elems,
 		case WLAN_EID_RRM_ENABLED_CAPABILITIES:
 			elems->rrm_enabled = NULL;
 			elems->rrm_enabled_len = 0;
+			break;
+		case WLAN_EID_S1G_MAX_AWAY_DURATION:
+			elems->max_away_duration = 0;
 			break;
 		case WLAN_EID_CAG_NUMBER:
 			elems->cag_number = NULL;
@@ -1429,6 +1447,7 @@ ieee80211_freq_to_channel_ext(unsigned int freq, int sec_channel,
 			      enum oper_chan_width chanwidth,
 			      u8 *op_class, u8 *channel)
 {
+#ifndef MM_IOT
 	u8 vht_opclass;
 
 	/* TODO: more operating classes */
@@ -1650,6 +1669,7 @@ ieee80211_freq_to_channel_ext(unsigned int freq, int sec_channel,
 		return HOSTAPD_MODE_IEEE80211AD;
 	}
 
+#endif /* MM_IOT */
 	return NUM_HOSTAPD_MODES;
 }
 
@@ -1657,6 +1677,7 @@ ieee80211_freq_to_channel_ext(unsigned int freq, int sec_channel,
 int ieee80211_chaninfo_to_channel(unsigned int freq, enum chan_width chanwidth,
 				  int sec_channel, u8 *op_class, u8 *channel)
 {
+#ifndef MM_IOT
 	int cw = CHAN_WIDTH_UNKNOWN;
 
 	switch (chanwidth) {
@@ -1700,6 +1721,7 @@ int ieee80211_chaninfo_to_channel(unsigned int freq, enum chan_width chanwidth,
 		return -1;
 	}
 
+#endif /* MM_IOT */
 	return 0;
 }
 
@@ -1739,7 +1761,7 @@ static int country_match(const char *const cc[], const char *const country)
 }
 
 
-static int ieee80211_chan_to_freq_us(u8 op_class, u8 chan)
+static int ieee80211_chan_to_freq_khz_us(u8 op_class, u8 chan)
 {
 	switch (op_class) {
 	case 12: /* channels 1..11 */
@@ -1747,7 +1769,7 @@ static int ieee80211_chan_to_freq_us(u8 op_class, u8 chan)
 	case 33: /* channels 5..11; 40 MHz */
 		if (chan < 1 || chan > 11)
 			return -1;
-		return 2407 + 5 * chan;
+		return MHZ_TO_KHZ(2407 + 5 * chan);
 	case 1: /* channels 36,40,44,48 */
 	case 2: /* channels 52,56,60,64; dfs */
 	case 22: /* channels 36,44; 40 MHz */
@@ -1756,12 +1778,12 @@ static int ieee80211_chan_to_freq_us(u8 op_class, u8 chan)
 	case 28: /* channels 56,64; 40 MHz */
 		if (chan < 36 || chan > 64)
 			return -1;
-		return 5000 + 5 * chan;
+		return MHZ_TO_KHZ(5000 + 5 * chan);
 	case 4: /* channels 100-144 */
 	case 24: /* channels 100-140; 40 MHz */
 		if (chan < 100 || chan > 144)
 			return -1;
-		return 5000 + 5 * chan;
+		return MHZ_TO_KHZ(5000 + 5 * chan);
 	case 3: /* channels 149,153,157,161 */
 	case 25: /* channels 149,157; 40 MHz */
 	case 26: /* channels 149,157; 40 MHz */
@@ -1769,11 +1791,11 @@ static int ieee80211_chan_to_freq_us(u8 op_class, u8 chan)
 	case 31: /* channels 153,161; 40 MHz */
 		if (chan < 149 || chan > 161)
 			return -1;
-		return 5000 + 5 * chan;
+		return MHZ_TO_KHZ(5000 + 5 * chan);
 	case 5: /* channels 149,153,157,161,165 */
 		if (chan < 149 || chan > 165)
 			return -1;
-		return 5000 + 5 * chan;
+		return MHZ_TO_KHZ(5000 + 5 * chan);
 	case 34: /* 60 GHz band, channels 1..8 */
 		if (chan < 1 || chan > 8)
 			return -1;
@@ -1781,22 +1803,22 @@ static int ieee80211_chan_to_freq_us(u8 op_class, u8 chan)
 	case 37: /* 60 GHz band, EDMG CB2, channels 9..15 */
 		if (chan < 9 || chan > 15)
 			return -1;
-		return 56160 + 2160 * (chan - 8);
+		return MHZ_TO_KHZ(56160 + 2160 * (chan - 8));
 	case 38: /* 60 GHz band, EDMG CB3, channels 17..22 */
 		if (chan < 17 || chan > 22)
 			return -1;
-		return 56160 + 2160 * (chan - 16);
+		return MHZ_TO_KHZ(56160 + 2160 * (chan - 16));
 	case 39: /* 60 GHz band, EDMG CB4, channels 25..29 */
 		if (chan < 25 || chan > 29)
 			return -1;
-		return 56160 + 2160 * (chan - 24);
+		return MHZ_TO_KHZ(56160 + 2160 * (chan - 24));
 	default:
 		return -1;
 	}
 }
 
 
-static int ieee80211_chan_to_freq_eu(u8 op_class, u8 chan)
+static int ieee80211_chan_to_freq_khz_eu(u8 op_class, u8 chan)
 {
 	switch (op_class) {
 	case 4: /* channels 1..13 */
@@ -1804,7 +1826,7 @@ static int ieee80211_chan_to_freq_eu(u8 op_class, u8 chan)
 	case 12: /* channels 5..13; 40 MHz */
 		if (chan < 1 || chan > 13)
 			return -1;
-		return 2407 + 5 * chan;
+		return MHZ_TO_KHZ(2407 + 5 * chan);
 	case 1: /* channels 36,40,44,48 */
 	case 2: /* channels 52,56,60,64; dfs */
 	case 5: /* channels 36,44; 40 MHz */
@@ -1813,41 +1835,41 @@ static int ieee80211_chan_to_freq_eu(u8 op_class, u8 chan)
 	case 9: /* channels 56,64; 40 MHz */
 		if (chan < 36 || chan > 64)
 			return -1;
-		return 5000 + 5 * chan;
+		return MHZ_TO_KHZ(5000 + 5 * chan);
 	case 3: /* channels 100-140 */
 	case 7: /* channels 100-132; 40 MHz */
 	case 10: /* channels 104-136; 40 MHz */
 	case 16: /* channels 100-140 */
 		if (chan < 100 || chan > 140)
 			return -1;
-		return 5000 + 5 * chan;
+		return MHZ_TO_KHZ(5000 + 5 * chan);
 	case 17: /* channels 149,153,157,161,165,169 */
 		if (chan < 149 || chan > 169)
 			return -1;
-		return 5000 + 5 * chan;
+		return MHZ_TO_KHZ(5000 + 5 * chan);
 	case 18: /* 60 GHz band, channels 1..6 */
 		if (chan < 1 || chan > 6)
 			return -1;
-		return 56160 + 2160 * chan;
+		return MHZ_TO_KHZ(56160 + 2160 * chan);
 	case 21: /* 60 GHz band, EDMG CB2, channels 9..11 */
 		if (chan < 9 || chan > 11)
 			return -1;
-		return 56160 + 2160 * (chan - 8);
+		return MHZ_TO_KHZ(56160 + 2160 * (chan - 8));
 	case 22: /* 60 GHz band, EDMG CB3, channels 17..18 */
 		if (chan < 17 || chan > 18)
 			return -1;
-		return 56160 + 2160 * (chan - 16);
+		return MHZ_TO_KHZ(56160 + 2160 * (chan - 16));
 	case 23: /* 60 GHz band, EDMG CB4, channels 25 */
 		if (chan != 25)
 			return -1;
-		return 56160 + 2160 * (chan - 24);
+		return MHZ_TO_KHZ(56160 + 2160 * (chan - 24));
 	default:
 		return -1;
 	}
 }
 
 
-static int ieee80211_chan_to_freq_jp(u8 op_class, u8 chan)
+static int ieee80211_chan_to_freq_khz_jp(u8 op_class, u8 chan)
 {
 	/* Table E-3 in IEEE Std 802.11-2020 - Operating classes in Japan */
 	switch (op_class) {
@@ -1856,11 +1878,11 @@ static int ieee80211_chan_to_freq_jp(u8 op_class, u8 chan)
 	case 57: /* channels 5..13; 40 MHz */
 		if (chan < 1 || chan > 13)
 			return -1;
-		return 2407 + 5 * chan;
+		return MHZ_TO_KHZ(2407 + 5 * chan);
 	case 31: /* channel 14 */
 		if (chan != 14)
 			return -1;
-		return 2414 + 5 * chan;
+		return MHZ_TO_KHZ(2414 + 5 * chan);
 	case 1: /* channels 34,38,42,46(old) or 36,40,44,48 */
 	case 32: /* channels 52,56,60,64 */
 	case 33: /* channels 52,56,60,64 */
@@ -1872,7 +1894,7 @@ static int ieee80211_chan_to_freq_jp(u8 op_class, u8 chan)
 	case 43: /* channels 56,64; 40 MHz */
 		if (chan < 34 || chan > 64)
 			return -1;
-		return 5000 + 5 * chan;
+		return MHZ_TO_KHZ(5000 + 5 * chan);
 	case 34: /* channels 100-144 */
 	case 35: /* reserved */
 	case 39: /* channels 100-140; 40 MHz */
@@ -1882,30 +1904,30 @@ static int ieee80211_chan_to_freq_jp(u8 op_class, u8 chan)
 	case 58: /* channels 100-144 */
 		if (chan < 100 || chan > 144)
 			return -1;
-		return 5000 + 5 * chan;
+		return MHZ_TO_KHZ(5000 + 5 * chan);
 	case 59: /* 60 GHz band, channels 1..6 */
 		if (chan < 1 || chan > 6)
 			return -1;
-		return 56160 + 2160 * chan;
+		return MHZ_TO_KHZ(56160 + 2160 * chan);
 	case 62: /* 60 GHz band, EDMG CB2, channels 9..11 */
 		if (chan < 9 || chan > 11)
 			return -1;
-		return 56160 + 2160 * (chan - 8);
+		return MHZ_TO_KHZ(56160 + 2160 * (chan - 8));
 	case 63: /* 60 GHz band, EDMG CB3, channels 17..18 */
 		if (chan < 17 || chan > 18)
 			return -1;
-		return 56160 + 2160 * (chan - 16);
+		return MHZ_TO_KHZ(56160 + 2160 * (chan - 16));
 	case 64: /* 60 GHz band, EDMG CB4, channel 25 */
 		if (chan != 25)
 			return -1;
-		return 56160 + 2160 * (chan - 24);
+		return MHZ_TO_KHZ(56160 + 2160 * (chan - 24));
 	default:
 		return -1;
 	}
 }
 
 
-static int ieee80211_chan_to_freq_cn(u8 op_class, u8 chan)
+static int ieee80211_chan_to_freq_khz_cn(u8 op_class, u8 chan)
 {
 	switch (op_class) {
 	case 7: /* channels 1..13 */
@@ -1913,44 +1935,56 @@ static int ieee80211_chan_to_freq_cn(u8 op_class, u8 chan)
 	case 9: /* channels 5..13; 40 MHz */
 		if (chan < 1 || chan > 13)
 			return -1;
-		return 2407 + 5 * chan;
+		return MHZ_TO_KHZ(2407 + 5 * chan);
 	case 1: /* channels 36,40,44,48 */
 	case 2: /* channels 52,56,60,64; dfs */
 	case 4: /* channels 36,44; 40 MHz */
 	case 5: /* channels 52,60; 40 MHz */
 		if (chan < 36 || chan > 64)
 			return -1;
-		return 5000 + 5 * chan;
+		return MHZ_TO_KHZ(5000 + 5 * chan);
 	case 3: /* channels 149,153,157,161,165 */
 	case 6: /* channels 149,157; 40 MHz */
 		if (chan < 149 || chan > 165)
 			return -1;
-		return 5000 + 5 * chan;
+		return MHZ_TO_KHZ(5000 + 5 * chan);
 	default:
 		return -1;
 	}
 }
 
 
-static int ieee80211_chan_to_freq_global(u8 op_class, u8 chan)
+static int ieee80211_chan_to_freq_khz_global(u8 op_class, u8 chan)
 {
 	/* Table E-4 in IEEE Std 802.11-2020 - Global operating classes */
 	switch (op_class) {
+	case 50:
+	case 51:
+	case 52:
+	case 53:
+	case 68:
+	case 69:
+	case 70:
+	case 71:
+	case 72:
+		if (chan < 1 || chan > 51)
+			return -1;
+		return 902000 + chan * 500;
 	case 81:
 		/* channels 1..13 */
 		if (chan < 1 || chan > 13)
 			return -1;
-		return 2407 + 5 * chan;
+		return MHZ_TO_KHZ(2407 + 5 * chan);
 	case 82:
 		/* channel 14 */
 		if (chan != 14)
 			return -1;
-		return 2414 + 5 * chan;
+		return MHZ_TO_KHZ(2414 + 5 * chan);
 	case 83: /* channels 1..9; 40 MHz */
 	case 84: /* channels 5..13; 40 MHz */
 		if (chan < 1 || chan > 13)
 			return -1;
-		return 2407 + 5 * chan;
+		return MHZ_TO_KHZ(2407 + 5 * chan);
 	case 115: /* channels 36,40,44,48; indoor only */
 	case 116: /* channels 36,44; 40 MHz; indoor only */
 	case 117: /* channels 40,48; 40 MHz; indoor only */
@@ -1959,32 +1993,32 @@ static int ieee80211_chan_to_freq_global(u8 op_class, u8 chan)
 	case 120: /* channels 56,64; 40 MHz; dfs */
 		if (chan < 36 || chan > 64)
 			return -1;
-		return 5000 + 5 * chan;
+		return MHZ_TO_KHZ(5000 + 5 * chan);
 	case 121: /* channels 100-144 */
 	case 122: /* channels 100-140; 40 MHz */
 	case 123: /* channels 104-144; 40 MHz */
 		if (chan < 100 || chan > 144)
 			return -1;
-		return 5000 + 5 * chan;
+		return MHZ_TO_KHZ(5000 + 5 * chan);
 	case 124: /* channels 149,153,157,161 */
 		if (chan < 149 || chan > 161)
 			return -1;
-		return 5000 + 5 * chan;
+		return MHZ_TO_KHZ(5000 + 5 * chan);
 	case 125: /* channels 149,153,157,161,165,169,173,177 */
 	case 126: /* channels 149,157,165,173; 40 MHz */
 	case 127: /* channels 153,161,169,177; 40 MHz */
 		if (chan < 149 || chan > 177)
 			return -1;
-		return 5000 + 5 * chan;
+		return MHZ_TO_KHZ(5000 + 5 * chan);
 	case 128: /* center freqs 42, 58, 106, 122, 138, 155, 171; 80 MHz */
 	case 130: /* center freqs 42, 58, 106, 122, 138, 155, 171; 80 MHz */
 		if (chan < 36 || chan > 177)
 			return -1;
-		return 5000 + 5 * chan;
+		return MHZ_TO_KHZ(5000 + 5 * chan);
 	case 129: /* center freqs 50, 114, 163; 160 MHz */
 		if (chan < 36 || chan > 177)
 			return -1;
-		return 5000 + 5 * chan;
+		return MHZ_TO_KHZ(5000 + 5 * chan);
 	case 131: /* UHB channels, 20 MHz: 1, 5, 9.. */
 	case 132: /* UHB channels, 40 MHz: 3, 11, 19.. */
 	case 133: /* UHB channels, 80 MHz: 7, 23, 39.. */
@@ -1993,7 +2027,7 @@ static int ieee80211_chan_to_freq_global(u8 op_class, u8 chan)
 	case 137: /* UHB channels, 320 MHz: 31, 63, 95, 127, 159, 191 */
 		if (chan < 1 || chan > 233)
 			return -1;
-		return 5950 + chan * 5;
+		return MHZ_TO_KHZ(5950 + chan * 5);
 	case 136: /* UHB channels, 20 MHz: 2 */
 		if (chan == 2)
 			return 5935;
@@ -2001,22 +2035,60 @@ static int ieee80211_chan_to_freq_global(u8 op_class, u8 chan)
 	case 180: /* 60 GHz band, channels 1..8 */
 		if (chan < 1 || chan > 8)
 			return -1;
-		return 56160 + 2160 * chan;
+		return MHZ_TO_KHZ(56160 + 2160 * chan);
 	case 181: /* 60 GHz band, EDMG CB2, channels 9..15 */
 		if (chan < 9 || chan > 15)
 			return -1;
-		return 56160 + 2160 * (chan - 8);
+		return MHZ_TO_KHZ(56160 + 2160 * (chan - 8));
 	case 182: /* 60 GHz band, EDMG CB3, channels 17..22 */
 		if (chan < 17 || chan > 22)
 			return -1;
-		return 56160 + 2160 * (chan - 16);
+		return MHZ_TO_KHZ(56160 + 2160 * (chan - 16));
 	case 183: /* 60 GHz band, EDMG CB4, channel 25..29 */
 		if (chan < 25 || chan > 29)
 			return -1;
-		return 56160 + 2160 * (chan - 24);
+		return MHZ_TO_KHZ(56160 + 2160 * (chan - 24));
 	default:
 		return -1;
 	}
+}
+
+/**
+ * ieee80211_chan_to_freq_khz - Convert channel info to frequency KHz
+ * @country: Country code, if known; otherwise, global operating class is used
+ * @op_class: Operating class
+ * @chan: Channel number
+ * Returns: Frequency in KHz or -1 if the specified channel is unknown
+ */
+int ieee80211_chan_to_freq_khz(const char *country, u8 op_class, u8 chan)
+{
+	int freq;
+
+	if (country_match(us_op_class_cc, country)) {
+		freq = ieee80211_chan_to_freq_khz_us(op_class, chan);
+		if (freq > 0)
+			return freq;
+	}
+
+	if (country_match(eu_op_class_cc, country)) {
+		freq = ieee80211_chan_to_freq_khz_eu(op_class, chan);
+		if (freq > 0)
+			return freq;
+	}
+
+	if (country_match(jp_op_class_cc, country)) {
+		freq = ieee80211_chan_to_freq_khz_jp(op_class, chan);
+		if (freq > 0)
+			return freq;
+	}
+
+	if (country_match(cn_op_class_cc, country)) {
+		freq = ieee80211_chan_to_freq_khz_cn(op_class, chan);
+		if (freq > 0)
+			return freq;
+	}
+
+	return ieee80211_chan_to_freq_khz_global(op_class, chan);
 }
 
 /**
@@ -2028,33 +2100,7 @@ static int ieee80211_chan_to_freq_global(u8 op_class, u8 chan)
  */
 int ieee80211_chan_to_freq(const char *country, u8 op_class, u8 chan)
 {
-	int freq;
-
-	if (country_match(us_op_class_cc, country)) {
-		freq = ieee80211_chan_to_freq_us(op_class, chan);
-		if (freq > 0)
-			return freq;
-	}
-
-	if (country_match(eu_op_class_cc, country)) {
-		freq = ieee80211_chan_to_freq_eu(op_class, chan);
-		if (freq > 0)
-			return freq;
-	}
-
-	if (country_match(jp_op_class_cc, country)) {
-		freq = ieee80211_chan_to_freq_jp(op_class, chan);
-		if (freq > 0)
-			return freq;
-	}
-
-	if (country_match(cn_op_class_cc, country)) {
-		freq = ieee80211_chan_to_freq_cn(op_class, chan);
-		if (freq > 0)
-			return freq;
-	}
-
-	return ieee80211_chan_to_freq_global(op_class, chan);
+	return KHZ_TO_MHZ(ieee80211_chan_to_freq_khz(country, op_class, chan));
 }
 
 
@@ -2430,6 +2476,7 @@ struct wpabuf * mb_ies_by_info(struct mb_ies_info *info)
 }
 
 
+#ifndef MM_IOT
 const struct oper_class_map global_op_class[] = {
 	{ HOSTAPD_MODE_IEEE80211G, 81, 1, 13, 1, BW20, P2P_SUPP },
 	{ HOSTAPD_MODE_IEEE80211G, 82, 14, 14, 1, BW20, NO_P2P_SUPP },
@@ -2532,6 +2579,15 @@ enum phy_type ieee80211_get_phy_type(int freq, int ht, int vht)
 
 
 size_t global_op_class_size = ARRAY_SIZE(global_op_class);
+
+#else /* MM_IOT */
+
+enum phy_type ieee80211_get_phy_type(int freq, int ht, int vht)
+{
+	return PHY_TYPE_S1G;
+}
+
+#endif /* MM_IOT */
 
 
 /**
@@ -2763,6 +2819,7 @@ size_t add_multi_ap_ie(u8 *buf, size_t len,
 }
 
 
+#ifndef MM_IOT
 static const struct country_op_class us_op_class[] = {
 	{ 1, 115 },
 	{ 2, 118 },
@@ -3009,6 +3066,22 @@ bool is_6ghz_psc_frequency(int freq)
 	return false;
 }
 
+#else /* MM_IOT */
+
+bool is_6ghz_freq(int freq)
+{
+	(void)freq;
+	return false;
+}
+
+bool is_6ghz_psc_frequency(int freq)
+{
+	(void)freq;
+	return false;
+}
+
+#endif /* MM_IOT */
+
 
 /**
  * get_6ghz_sec_channel - Get the relative position of the secondary channel
@@ -3046,6 +3119,12 @@ bool is_same_band(int freq1, int freq2)
 		return true;
 
 	return false;
+}
+
+
+bool is_s1ghz_freq(int freq)
+{
+	return freq < 1000;
 }
 
 
@@ -3192,6 +3271,7 @@ bool ieee802_11_rsnx_capab(const u8 *rsnxe, unsigned int capab)
 }
 
 
+#ifndef MM_IOT
 void hostapd_encode_edmg_chan(int edmg_enable, u8 edmg_channel,
 			      int primary_channel,
 			      struct ieee80211_edmg_config *edmg)
@@ -3330,6 +3410,24 @@ int op_class_to_bandwidth(u8 op_class)
 enum oper_chan_width op_class_to_ch_width(u8 op_class)
 {
 	switch (op_class) {
+	case 50:
+		return CONF_OPER_CHWIDTH_1MHZ;
+	case 51:
+		return CONF_OPER_CHWIDTH_2MHZ;
+	case 52:
+		return CONF_OPER_CHWIDTH_4MHZ;
+	case 53:
+		return CONF_OPER_CHWIDTH_8MHZ;
+	case 68:
+		return CONF_OPER_CHWIDTH_1MHZ;
+	case 69:
+		return CONF_OPER_CHWIDTH_2MHZ;
+	case 70:
+		return CONF_OPER_CHWIDTH_4MHZ;
+	case 71:
+		return CONF_OPER_CHWIDTH_8MHZ;
+	case 72:
+		return CONF_OPER_CHWIDTH_16MHZ;
 	case 81:
 	case 82:
 		return CONF_OPER_CHWIDTH_USE_HT;
@@ -3389,6 +3487,7 @@ enum oper_chan_width op_class_to_ch_width(u8 op_class)
 		return CONF_OPER_CHWIDTH_USE_HT;
 	}
 }
+#endif /* MM_IOT */
 
 
 /**

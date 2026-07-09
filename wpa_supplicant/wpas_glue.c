@@ -740,7 +740,7 @@ static int wpa_supplicant_send_ft_action(void *ctx, u8 action,
 	pos += ETH_ALEN;
 	os_memcpy(pos, ies, ies_len);
 
-	ret = wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0,
+	ret = wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, 0,
 				  wpa_s->bssid, wpa_s->own_addr, wpa_s->bssid,
 				  data, data_len, 0);
 	os_free(data);
@@ -1147,6 +1147,7 @@ static int wpa_supplicant_eap_auth_start_cb(void *ctx)
 
 static void wpa_supplicant_set_anon_id(void *ctx, const u8 *id, size_t len)
 {
+#ifndef MM_IOT
 	struct wpa_supplicant *wpa_s = ctx;
 	char *str;
 	int res;
@@ -1180,6 +1181,11 @@ static void wpa_supplicant_set_anon_id(void *ctx, const u8 *id, size_t len)
 				   "anonymous_id update");
 		}
 	}
+#else /* MM_IOT */
+	(void)ctx;
+	(void)id;
+	(void)len;
+#endif /* MM_IOT */
 }
 
 

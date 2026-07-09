@@ -12,6 +12,9 @@
 #include "utils/list.h"
 #include "drivers/driver.h"
 #include "p2p.h"
+#ifdef CONFIG_AIDL
+#include "ap/ap_config.h"
+#endif /*CONFIG_AIDL*/
 
 #define P2P_GO_NEG_CNF_MAX_RETRY_COUNT 1
 
@@ -439,6 +442,18 @@ struct p2p_data {
 	 * ssid_set - Whether SSID is already set for GO Negotiation
 	 */
 	int ssid_set;
+
+#ifdef CONFIG_AIDL
+	/**
+	 * passphrase - WPA2-Personal passphrase for GO Negotiation (if local end will be GO)
+	 */
+	char passphrase[MAX_PASSPHRASE_LEN + 1];
+
+	/**
+	 * passphrase_set - Whether passphrase is already set for GO Negotiation
+	 */
+	int passphrase_set;
+#endif /*CONFIG_AIDL*/
 
 	/**
 	 * Regulatory class for own operational channel

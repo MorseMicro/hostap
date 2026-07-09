@@ -1,6 +1,7 @@
 /*
  * WPA Supplicant - Basic mesh mode routines
  * Copyright (c) 2013-2014, cozybit, Inc.  All rights reserved.
+ * Copyright 2023 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -104,6 +105,8 @@ static struct mesh_conf * mesh_config_create(struct wpa_supplicant *wpa_s,
 		else
 			conf->ieee80211w = NO_MGMT_FRAME_PROTECTION;
 	}
+	wpa_msg(wpa_s, MSG_INFO, "mesh: ieee80211w:%d PMF:%d",
+			conf->ieee80211w, wpa_s->conf->pmf);
 #ifdef CONFIG_OCV
 	conf->ocv = ssid->ocv;
 #endif /* CONFIG_OCV */
@@ -141,6 +144,8 @@ static struct mesh_conf * mesh_config_create(struct wpa_supplicant *wpa_s,
 	conf->mesh_sp_id = MESH_SYNC_METHOD_NEIGHBOR_OFFSET;
 	conf->mesh_auth_id = (conf->security & MESH_CONF_SEC_AUTH) ? 1 : 0;
 	conf->mesh_fwding = ssid->mesh_fwding;
+	conf->dot11MeshHWMPRootMode = ssid->dot11MeshHWMPRootMode;
+	conf->dot11MeshGateAnnouncements = ssid->dot11MeshGateAnnouncements;
 	conf->dot11MeshMaxRetries = ssid->dot11MeshMaxRetries;
 	conf->dot11MeshRetryTimeout = ssid->dot11MeshRetryTimeout;
 	conf->dot11MeshConfirmTimeout = ssid->dot11MeshConfirmTimeout;
@@ -186,6 +191,37 @@ static int wpas_mesh_init_rsn(struct wpa_supplicant *wpa_s)
 }
 
 
+int mesh_iface_wpa_get_status(struct wpa_supplicant *wpa_s, char *buf, size_t buflen)
+{
+	char *pos = buf, *end = buf + buflen;
+	int ret;
+	struct wpa_ssid *ssid = wpa_s->current_ssid;
+	struct mesh_conf *mconf = wpa_s->ifmsh->mconf;
+	unsigned int pairwise_cipher =
+		(ssid->key_mgmt == WPA_KEY_MGMT_NONE) ? WPA_CIPHER_NONE : mconf->pairwise_cipher;
+	unsigned int group_cipher =
+		(ssid->key_mgmt == WPA_KEY_MGMT_NONE) ? WPA_CIPHER_NONE : mconf->group_cipher;
+
+	ret = os_snprintf(pos, end - pos,
+			  "pairwise_cipher=%s\ngroup_cipher=%s\nkey_mgmt=%s\n",
+			  wpa_cipher_txt(pairwise_cipher),
+			  wpa_cipher_txt(group_cipher),
+			  wpa_key_mgmt_txt(ssid->key_mgmt, ssid->proto));
+	if (os_snprintf_error(end - pos, ret))
+		return pos - buf;
+	pos += ret;
+
+	if (ssid->ieee80211w != NO_MGMT_FRAME_PROTECTION) {
+		ret = os_snprintf(pos, end - pos, "pmf=%d\nmgmt_group_cipher=%s\n",
+					ssid->ieee80211w, wpa_cipher_txt(mconf->mgmt_group_cipher));
+		if (os_snprintf_error(end - pos, ret))
+			return pos - buf;
+		pos += ret;
+	}
+
+	return pos - buf;
+}
+
 static int wpas_mesh_update_freq_params(struct wpa_supplicant *wpa_s)
 {
 	struct wpa_driver_mesh_join_params *params = wpa_s->mesh_params;
@@ -198,7 +234,7 @@ static int wpas_mesh_update_freq_params(struct wpa_supplicant *wpa_s)
 	if (hostapd_set_freq_params(
 		    &params->freq,
 		    ifmsh->conf->hw_mode,
-		    ifmsh->freq,
+		    ifmsh->freq, 0,
 		    ifmsh->conf->channel,
 		    ifmsh->conf->enable_edmg,
 		    ifmsh->conf->edmg_channel,
@@ -414,6 +450,7 @@ static int wpa_supplicant_mesh_init(struct wpa_supplicant *wpa_s,
 	}
 	wpa_s->assoc_freq = frequency;
 	wpa_s->current_ssid = ssid;
+	os_memcpy(wpa_s->bssid, wpa_s->own_addr, ETH_ALEN);
 
 	/* setup an AP config for auth processing */
 	conf = hostapd_config_defaults();
@@ -453,6 +490,10 @@ static int wpa_supplicant_mesh_init(struct wpa_supplicant *wpa_s,
 			break;
 		}
 	}
+
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+	morse_ibss_mesh_setup_freq(wpa_s, ssid, freq, conf);
+#endif
 
 	bss->conf = *conf->bss;
 	bss->conf->start_disabled = 1;
@@ -574,6 +615,53 @@ static int wpa_supplicant_mesh_init(struct wpa_supplicant *wpa_s,
 		return -1;
 	}
 
+#ifdef CONFIG_IEEE80211AH
+	/* MBCA configuration should be set before mesh config cmd as mesh interface is started
+	 * immediately after sending mesh config command.
+	 */
+	if (ssid->mbca_config && !(ssid->mbca_config & MESH_MBCA_CFG_TBTT_SEL_ENABLE)) {
+		wpa_printf(MSG_ERROR,
+			"Invalid MBCA configuration 0x%02x - enabling TBTT selection\n",
+			ssid->mbca_config);
+		ssid->mbca_config |= MESH_MBCA_CFG_TBTT_SEL_ENABLE;
+	}
+
+	/* Verify min beacon gap is less than beacon interval */
+	if (ssid->mbca_min_beacon_gap_ms >= ssid->beacon_int) {
+		wpa_printf(MSG_ERROR, "Min beacon gap %u must be less than beacon interval %u\n",
+			ssid->mbca_min_beacon_gap_ms, ssid->beacon_int);
+		return -1;
+	}
+#ifdef CONFIG_DRIVER_NL80211_MORSE
+	if (!wpa_s->driver->mbca_conf)
+		wpa_printf(MSG_ERROR, "Driver interface not defined for mbca_conf");
+	else if (wpa_s->driver->mbca_conf(wpa_s->drv_priv,
+					  ssid->mbca_config, ssid->mbca_min_beacon_gap_ms,
+					  ssid->mbca_tbtt_adj_interval_sec,
+					  ssid->dot11MeshBeaconTimingReportInterval,
+					  ssid->mbss_start_scan_duration_ms))
+		wpa_printf(MSG_ERROR, "Failed to send mbca_conf");
+
+	/* configure dynamic peering */
+	if (!wpa_s->driver->set_mesh_dynamic_peering)
+		wpa_printf(MSG_ERROR,
+			     "Driver interface not defined for set_mesh_dynamic_peering");
+	else if (wpa_s->driver->set_mesh_dynamic_peering(wpa_s->drv_priv,
+							 ssid->mesh_dynamic_peering,
+							 ssid->mesh_rssi_margin,
+							 ssid->mesh_blacklist_timeout))
+		wpa_printf(MSG_ERROR, "Failed to send set_mesh_dynamic_peering");
+
+	/* Start the Mesh Interface */
+	if (!wpa_s->driver->set_mesh_config)
+		wpa_printf(MSG_ERROR, "Driver interface not defined for set_mesh_config");
+	else if (wpa_s->driver->set_mesh_config(wpa_s->drv_priv, ssid->ssid, ssid->ssid_len,
+						ssid->mesh_beaconless_mode,
+						wpa_s->conf->max_peer_links))
+		wpa_printf(MSG_ERROR, "Failed to send set_mesh_config");
+#endif /* CONFIG_DRIVER_NL80211_MORSE */
+#endif
+
 	return 0;
 out_free:
 	wpa_supplicant_mesh_deinit(wpa_s, true);
@@ -617,9 +705,14 @@ int wpa_supplicant_join_mesh(struct wpa_supplicant *wpa_s,
 {
 	struct wpa_driver_mesh_join_params *params = os_zalloc(sizeof(*params));
 	int ret = 0;
+	int channel_or_frequency = ssid->frequency;
 
-	if (!ssid || !ssid->ssid || !ssid->ssid_len || !ssid->frequency ||
-	    !params) {
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+	struct hostapd_config *conf = hostapd_config_defaults();
+
+	channel_or_frequency = ssid->channel;
+#endif
+	if (!ssid || !ssid->ssid || !ssid->ssid_len || !channel_or_frequency || !params) {
 		ret = -ENOENT;
 		os_free(params);
 		goto out;
@@ -633,7 +726,19 @@ int wpa_supplicant_join_mesh(struct wpa_supplicant *wpa_s,
 
 	params->meshid = ssid->ssid;
 	params->meshid_len = ssid->ssid_len;
+
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+	if (conf) {
+		morse_ibss_mesh_setup_freq(wpa_s, ssid, &params->freq, conf);
+		hostapd_config_free(conf);
+	} else {
+		ret = -1;
+		goto out;
+	}
+#else
 	ibss_mesh_setup_freq(wpa_s, ssid, &params->freq);
+#endif /* CONFIG_MORSE_5GHZ_MAPPED */
+
 	wpa_s->mesh_ht_enabled = !!params->freq.ht_enabled;
 	wpa_s->mesh_vht_enabled = !!params->freq.vht_enabled;
 	wpa_s->mesh_he_enabled = !!params->freq.he_enabled;
@@ -676,12 +781,21 @@ int wpa_supplicant_join_mesh(struct wpa_supplicant *wpa_s,
 		params->dtim_period = ssid->dtim_period;
 	else if (wpa_s->conf->dtim_period > 0)
 		params->dtim_period = wpa_s->conf->dtim_period;
+
+#if CONFIG_IEEE80211AH
+	if (params->dtim_period != 1) {
+		wpa_msg(wpa_s, MSG_ERROR, "Invalid DTIM period (%d) for Mesh, set (1)",
+			params->dtim_period);
+		ret = -1;
+		goto out;
+	}
+#endif
 	params->conf.max_peer_links = wpa_s->conf->max_peer_links;
-	if (ssid->mesh_rssi_threshold < DEFAULT_MESH_RSSI_THRESHOLD) {
+	/* Only apply mesh RSSI threshold if explicitly set to a valid value */
+	if (ssid->mesh_rssi_threshold < 0) {
 		params->conf.rssi_threshold = ssid->mesh_rssi_threshold;
 		params->conf.flags |= WPA_DRIVER_MESH_CONF_FLAG_RSSI_THRESHOLD;
 	}
-
 	if (ssid->key_mgmt & WPA_KEY_MGMT_SAE) {
 		params->flags |= WPA_DRIVER_MESH_FLAG_SAE_AUTH;
 		params->flags |= WPA_DRIVER_MESH_FLAG_AMPE;
@@ -700,6 +814,25 @@ int wpa_supplicant_join_mesh(struct wpa_supplicant *wpa_s,
 	/* Always explicitely set forwarding to on or off for now */
 	params->conf.flags |= WPA_DRIVER_MESH_CONF_FLAG_FORWARDING;
 	params->conf.forwarding = ssid->mesh_fwding;
+
+	if (!ssid->mesh_fwding) {
+		params->conf.flags |= WPA_DRIVER_MESH_CONF_FLAG_NOLEARN;
+		params->conf.nolearn = true;
+	}
+
+	if (ssid->dot11MeshHWMPRootMode > MESH_HWMP_NOROOT) {
+		params->conf.flags |= WPA_DRIVER_MESH_CONF_FLAG_ROOTMODE;
+		params->conf.dot11MeshHWMPRootMode = ssid->dot11MeshHWMPRootMode;
+	}
+
+	if (ssid->dot11MeshGateAnnouncements) {
+		/* Gate annoucements rely on RANN mode in mac80211. */
+		params->conf.flags |= WPA_DRIVER_MESH_CONF_FLAG_ROOTMODE;
+		params->conf.dot11MeshHWMPRootMode = MESH_HWMP_RANN;
+
+		params->conf.flags |= WPA_DRIVER_MESH_CONF_FLAG_GATE_ANNOUNCEMENTS;
+		params->conf.dot11MeshGateAnnouncements = 1;
+	}
 
 	os_free(wpa_s->mesh_params);
 	wpa_s->mesh_params = params;

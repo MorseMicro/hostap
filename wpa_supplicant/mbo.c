@@ -300,7 +300,7 @@ static void wpas_mbo_send_wnm_notification(struct wpa_supplicant *wpa_s,
 
 	wpabuf_put_data(buf, data, len);
 
-	res = wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, wpa_s->bssid,
+	res = wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, 0, wpa_s->bssid,
 				  wpa_s->own_addr, wpa_s->bssid,
 				  wpabuf_head(buf), wpabuf_len(buf), 0);
 	if (res < 0)

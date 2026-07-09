@@ -1,6 +1,7 @@
 /*
  * wpa_supplicant - SME
  * Copyright (c) 2009-2024, Jouni Malinen <j@w1.fi>
+ * Copyright 2021 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -32,6 +33,7 @@
 #include "scan.h"
 #include "sme.h"
 #include "hs20_supplicant.h"
+#include "morse.h"
 
 #define SME_AUTH_TIMEOUT 5
 #define SME_ASSOC_TIMEOUT 5
@@ -621,6 +623,9 @@ static void sme_send_authentication(struct wpa_supplicant *wpa_s,
 	const u8 *mbo_ie;
 #endif /* CONFIG_MBO */
 	int omit_rsnxe = 0;
+#ifdef CONFIG_IEEE80211AH
+	char *country = wpa_s->conf ? wpa_s->conf->country : NULL;
+#endif
 
 	if (bss == NULL) {
 		wpa_msg(wpa_s, MSG_ERROR, "SME: No scan result available for "
@@ -657,6 +662,7 @@ static void sme_send_authentication(struct wpa_supplicant *wpa_s,
 	wpa_s->reassociate = 0;
 
 	params.freq = bss->freq;
+	params.freq_offset = bss->freq_offset;
 	params.bssid = bss->bssid;
 	params.ssid = bss->ssid;
 	params.ssid_len = bss->ssid_len;
@@ -667,6 +673,7 @@ static void sme_send_authentication(struct wpa_supplicant *wpa_s,
 		wpa_s->sme.prev_bssid_set = 0;
 
 	wpa_s->sme.freq = params.freq;
+	wpa_s->sme.freq_offset = params.freq_offset;
 	os_memcpy(wpa_s->sme.ssid, params.ssid, params.ssid_len);
 	wpa_s->sme.ssid_len = params.ssid_len;
 
@@ -902,6 +909,11 @@ static void sme_send_authentication(struct wpa_supplicant *wpa_s,
 #endif /* CONFIG_FST */
 
 	sme_auth_handle_rrm(wpa_s, bss);
+#ifdef CONFIG_IEEE80211AH
+	wpa_s->sme.assoc_req_ie_len += wpas_supp_s1g_op_class_ie(wpa_s, ssid, bss,
+				wpa_s->sme.assoc_req_ie + wpa_s->sme.assoc_req_ie_len,
+				sizeof(wpa_s->sme.assoc_req_ie) - wpa_s->sme.assoc_req_ie_len);
+#else
 
 #ifndef CONFIG_NO_RRM
 	wpa_s->sme.assoc_req_ie_len += wpas_supp_op_class_ie(
@@ -909,6 +921,7 @@ static void sme_send_authentication(struct wpa_supplicant *wpa_s,
 		wpa_s->sme.assoc_req_ie + wpa_s->sme.assoc_req_ie_len,
 		sizeof(wpa_s->sme.assoc_req_ie) - wpa_s->sme.assoc_req_ie_len);
 #endif /* CONFIG_NO_RRM */
+#endif
 
 	if (params.p2p)
 		wpa_drv_get_ext_capa(wpa_s, WPA_IF_P2P_CLIENT);
@@ -939,6 +952,19 @@ static void sme_send_authentication(struct wpa_supplicant *wpa_s,
 		*pos = 0; /* Idle Options */
 		wpa_s->sme.assoc_req_ie_len += 5;
 	}
+
+#ifdef CONFIG_IEEE80211AH
+	if (ssid->max_away_duration && wpa_s->sme.assoc_req_ie_len + 4 <=
+	    sizeof(wpa_s->sme.assoc_req_ie)) {
+		u8 *pos = wpa_s->sme.assoc_req_ie + wpa_s->sme.assoc_req_ie_len;
+
+		*pos++ = WLAN_EID_S1G_MAX_AWAY_DURATION;
+		*pos++ = 2;
+		WPA_PUT_LE16(pos, ssid->max_away_duration);
+		pos += 2;
+		wpa_s->sme.assoc_req_ie_len += 4;
+	}
+#endif	/* CONFIG_IEEE80211AH */
 
 #ifdef CONFIG_TESTING_OPTIONS
 	if (wpa_s->rsnxe_override_assoc) {
@@ -1162,9 +1188,17 @@ no_fils:
 	wpa_supplicant_cancel_sched_scan(wpa_s);
 	wpa_supplicant_cancel_scan(wpa_s);
 
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
 	wpa_msg(wpa_s, MSG_INFO, "SME: Trying to authenticate with " MACSTR
-		" (SSID='%s' freq=%d MHz)", MAC2STR(params.bssid),
-		wpa_ssid_txt(params.ssid, params.ssid_len), params.freq);
+		" (SSID='%s' chan=%d%s)", MAC2STR(params.bssid),
+		wpa_ssid_txt(params.ssid, params.ssid_len),
+		morse_ht_freq_to_s1g_chan(bss->freq, country), "");
+#else
+	wpa_msg(wpa_s, MSG_INFO, "SME: Trying to authenticate with " MACSTR
+		" (SSID='%s' freq=%d freq_offset=%d)", MAC2STR(params.bssid),
+		wpa_ssid_txt(params.ssid, params.ssid_len),
+		params.freq, params.freq_offset);
+#endif
 
 	eapol_sm_notify_portValid(wpa_s->eapol, false);
 	wpa_clear_keys(wpa_s, bss->bssid);
@@ -1323,7 +1357,7 @@ void sme_authenticate(struct wpa_supplicant *wpa_s,
 	wpa_s->sme.sae_group_index = 0;
 #endif /* CONFIG_SAE */
 
-	if (radio_add_work(wpa_s, bss->freq, "sme-connect", 1,
+	if (radio_add_work(wpa_s, bss->freq, bss->freq_offset, "sme-connect", 1,
 			   sme_auth_start_cb, cwork) < 0)
 		wpas_connect_work_free(cwork);
 }
@@ -1420,7 +1454,7 @@ static int sme_external_auth_send_sae_commit(struct wpa_supplicant *wpa_s,
 				    wpa_s->sme.seq_num, status,
 				    wpa_s->sme.ext_ml_auth ?
 				    wpa_s->own_addr : NULL);
-	wpa_drv_send_mlme(wpa_s, wpabuf_head(buf), wpabuf_len(buf), 1, 0, 0);
+	wpa_drv_send_mlme(wpa_s, wpabuf_head(buf), wpabuf_len(buf), 1, 0, 0, 0);
 	wpabuf_free(resp);
 	wpabuf_free(buf);
 
@@ -1501,7 +1535,7 @@ static void sme_external_auth_send_sae_confirm(struct wpa_supplicant *wpa_s,
 				    wpa_s->sme.ext_ml_auth ?
 				    wpa_s->own_addr : NULL);
 
-	wpa_drv_send_mlme(wpa_s, wpabuf_head(buf), wpabuf_len(buf), 1, 0, 0);
+	wpa_drv_send_mlme(wpa_s, wpabuf_head(buf), wpabuf_len(buf), 1, 0, 0, 0);
 	wpabuf_free(resp);
 	wpabuf_free(buf);
 }
@@ -2040,6 +2074,11 @@ void sme_external_auth_mgmt_rx(struct wpa_supplicant *wpa_s,
 				    wpa_s->sme.ext_auth_bssid) < 0)
 			return;
 	}
+
+#ifdef CONFIG_IEEE80211AH
+	/* Reset the CAC random value reset after a successful auth */
+	wpa_bss_cac_set_random_value(wpa_s->current_bss);
+#endif /* CONFIG_IEEE80211AH */
 }
 
 #endif /* CONFIG_SAE */
@@ -2101,6 +2140,7 @@ void sme_event_auth(struct wpa_supplicant *wpa_s, union wpa_event_data *data)
 				wpa_s_clear_sae_rejected(wpa_s);
 			}
 		}
+
 		if (res != 1)
 			return;
 
@@ -2170,6 +2210,11 @@ void sme_event_auth(struct wpa_supplicant *wpa_s, union wpa_event_data *data)
 			return;
 		}
 	}
+
+#ifdef CONFIG_IEEE80211AH
+	/* Reset the CAC random value reset after a successful auth */
+	wpa_bss_cac_set_random_value(wpa_s->current_bss);
+#endif /* CONFIG_IEEE80211AH */
 
 #ifdef CONFIG_IEEE80211R
 	if (data->auth.auth_type == WLAN_AUTH_FT) {
@@ -2296,6 +2341,9 @@ void sme_associate(struct wpa_supplicant *wpa_s, enum wpas_mode mode,
 	struct ieee80211_vht_capabilities vhtcaps;
 	struct ieee80211_vht_capabilities vhtcaps_mask;
 #endif /* CONFIG_VHT_OVERRIDES */
+#ifdef CONFIG_IEEE80211AH
+	char *country = wpa_s->conf ? wpa_s->conf->country : NULL;
+#endif
 
 	os_memset(&params, 0, sizeof(params));
 
@@ -2510,6 +2558,23 @@ mscs_fail:
 				       wpa_s->sme.assoc_req_ie_len,
 				       sizeof(wpa_s->sme.assoc_req_ie));
 
+#ifdef CONFIG_IEEE80211AH
+	/* If the STA has a priority for use with RAW insert a QoS Traffic
+	* Capability. */
+	wpa_printf(MSG_DEBUG, "raw_sta_priority: %d", ssid->raw_sta_priority);
+	if (ssid && (ssid->raw_sta_priority >= 0)) {
+		u8 qos_traffic_cap[QOS_TRAFFIC_CAP_SIZE] =
+			{ WLAN_EID_QOS_TRAFFIC_CAPABILITY,
+			1,
+			(ssid->raw_sta_priority  << QOS_TRAFFIC_UP_SHIFT) &
+				QOS_TRAFFIC_UP_MASK };
+
+		os_memcpy(wpa_s->sme.assoc_req_ie + wpa_s->sme.assoc_req_ie_len,
+			  qos_traffic_cap, QOS_TRAFFIC_CAP_SIZE);
+		wpa_s->sme.assoc_req_ie_len += QOS_TRAFFIC_CAP_SIZE;
+	}
+#endif
+
 	if (ssid && ssid->multi_ap_backhaul_sta) {
 		size_t multi_ap_ie_len;
 		struct multi_ap_params multi_ap = { 0 };
@@ -2576,6 +2641,7 @@ mscs_fail:
 	params.ssid = wpa_s->sme.ssid;
 	params.ssid_len = wpa_s->sme.ssid_len;
 	params.freq.freq = wpa_s->sme.freq;
+	params.freq.freq_offset = wpa_s->sme.freq_offset;
 	params.bg_scan_period = ssid ? ssid->bg_scan_period : -1;
 	params.wpa_ie = wpa_s->sme.assoc_req_ie_len ?
 		wpa_s->sme.assoc_req_ie : NULL;
@@ -2695,10 +2761,13 @@ mscs_fail:
 		params.prev_bssid = wpa_s->sme.prev_bssid;
 
 	wpa_msg(wpa_s, MSG_INFO, "Trying to associate with " MACSTR
-		" (SSID='%s' freq=%d MHz)", MAC2STR(params.bssid),
+		" (SSID='%s' %s=%d%s)", MAC2STR(params.bssid),
 		params.ssid ? wpa_ssid_txt(params.ssid, params.ssid_len) : "",
-		params.freq.freq);
-
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+		"chan", morse_ht_freq_to_s1g_chan(params.freq.freq, country), "");
+#else
+		"freq", params.freq.freq, " MHz");
+#endif
 	wpa_supplicant_set_state(wpa_s, WPA_ASSOCIATING);
 
 	if (params.wpa_ie == NULL ||
@@ -2836,10 +2905,7 @@ int sme_update_ft_ies(struct wpa_supplicant *wpa_s, const u8 *md,
 
 static void sme_deauth(struct wpa_supplicant *wpa_s, const u8 **link_bssids)
 {
-	int bssid_changed;
 	const u8 *bssid;
-
-	bssid_changed = !is_zero_ether_addr(wpa_s->bssid);
 
 	if (wpa_s->valid_links)
 		bssid = wpa_s->ap_mld_addr;
@@ -2854,11 +2920,7 @@ static void sme_deauth(struct wpa_supplicant *wpa_s, const u8 **link_bssids)
 	wpa_s->sme.prev_bssid_set = 0;
 
 	wpas_connection_failed(wpa_s, wpa_s->pending_bssid, link_bssids);
-	wpa_supplicant_set_state(wpa_s, WPA_DISCONNECTED);
-	os_memset(wpa_s->bssid, 0, ETH_ALEN);
-	os_memset(wpa_s->pending_bssid, 0, ETH_ALEN);
-	if (bssid_changed)
-		wpas_notify_bssid_changed(wpa_s);
+	wpa_supplicant_mark_disassoc(wpa_s);
 }
 
 
@@ -3171,7 +3233,7 @@ static void sme_send_2040_bss_coex(struct wpa_supplicant *wpa_s,
 			  num_channels);
 	}
 
-	if (wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, wpa_s->bssid,
+	if (wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, 0, wpa_s->bssid,
 				wpa_s->own_addr, wpa_s->bssid,
 				wpabuf_head(buf), wpabuf_len(buf), 0) < 0) {
 		wpa_msg(wpa_s, MSG_INFO,
@@ -3483,7 +3545,7 @@ static void sme_send_sa_query_req(struct wpa_supplicant *wpa_s,
 	}
 #endif /* CONFIG_OCV */
 
-	if (wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, wpa_s->bssid,
+	if (wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, 0, wpa_s->bssid,
 				wpa_s->own_addr, wpa_s->bssid,
 				req, req_len, 0) < 0)
 		wpa_msg(wpa_s, MSG_INFO, "SME: Failed to send SA Query "
@@ -3565,7 +3627,8 @@ void sme_event_unprot_disconnect(struct wpa_supplicant *wpa_s, const u8 *sa,
 	if (!ether_addr_equal(sa, wpa_s->bssid))
 		return;
 	if (reason_code != WLAN_REASON_CLASS2_FRAME_FROM_NONAUTH_STA &&
-	    reason_code != WLAN_REASON_CLASS3_FRAME_FROM_NONASSOC_STA)
+	    reason_code != WLAN_REASON_CLASS3_FRAME_FROM_NONASSOC_STA &&
+	    reason_code != WLAN_REASON_4WAY_HANDSHAKE_TIMEOUT)
 		return;
 	if (wpa_s->sme.sa_query_count > 0)
 		return;
@@ -3647,7 +3710,7 @@ static void sme_process_sa_query_request(struct wpa_supplicant *wpa_s,
 	}
 #endif /* CONFIG_OCV */
 
-	if (wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, wpa_s->bssid,
+	if (wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, 0, wpa_s->bssid,
 				wpa_s->own_addr, wpa_s->bssid,
 				resp, resp_len, 0) < 0)
 		wpa_msg(wpa_s, MSG_INFO,

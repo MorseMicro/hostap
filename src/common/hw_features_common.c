@@ -2,6 +2,7 @@
  * Common hostapd/wpa_supplicant HW features
  * Copyright (c) 2002-2013, Jouni Malinen <j@w1.fi>
  * Copyright (c) 2015, Qualcomm Atheros, Inc.
+ * Copyright 2021 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -41,14 +42,15 @@ struct hostapd_channel_data * hw_get_channel_chan(struct hostapd_hw_modes *mode,
 
 
 struct hostapd_channel_data *
-hw_mode_get_channel(struct hostapd_hw_modes *mode, int freq, int *chan)
+hw_mode_get_channel(struct hostapd_hw_modes *mode, int freq,
+		    int freq_offset, int *chan)
 {
 	int i;
 
 	for (i = 0; i < mode->num_channels; i++) {
 		struct hostapd_channel_data *ch = &mode->channels[i];
 
-		if (ch->freq == freq) {
+		if (MHZ_TO_KHZ(ch->freq) + ch->freq_offset == MHZ_TO_KHZ(freq) + freq_offset) {
 			if (chan)
 				*chan = ch->chan;
 			return ch;
@@ -60,8 +62,9 @@ hw_mode_get_channel(struct hostapd_hw_modes *mode, int freq, int *chan)
 
 
 struct hostapd_channel_data *
-hw_get_channel_freq(enum hostapd_hw_mode mode, int freq, int *chan,
-		    struct hostapd_hw_modes *hw_features, int num_hw_features)
+hw_get_channel_freq(enum hostapd_hw_mode mode, int freq, int freq_offset,
+		    int *chan, struct hostapd_hw_modes *hw_features,
+		    int num_hw_features)
 {
 	struct hostapd_channel_data *chan_data;
 	int i;
@@ -78,7 +81,8 @@ hw_get_channel_freq(enum hostapd_hw_mode mode, int freq, int *chan,
 		if (curr_mode->mode != mode)
 			continue;
 
-		chan_data = hw_mode_get_channel(curr_mode, freq, chan);
+		chan_data = hw_mode_get_channel(curr_mode, freq,
+						freq_offset, chan);
 		if (chan_data)
 			return chan_data;
 	}
@@ -97,12 +101,13 @@ int hw_get_freq(struct hostapd_hw_modes *mode, int chan)
 }
 
 
-int hw_get_chan(enum hostapd_hw_mode mode, int freq,
+int hw_get_chan(enum hostapd_hw_mode mode, int freq, int freq_offset,
 		struct hostapd_hw_modes *hw_features, int num_hw_features)
 {
 	int chan;
 
-	hw_get_channel_freq(mode, freq, &chan, hw_features, num_hw_features);
+	hw_get_channel_freq(mode, freq, freq_offset, &chan, hw_features,
+			    num_hw_features);
 
 	return chan;
 }
@@ -113,8 +118,13 @@ int allowed_ht40_channel_pair(enum hostapd_hw_mode mode,
 			      struct hostapd_channel_data *s_chan)
 {
 	int ok, first;
-	int allowed[] = { 36, 44, 52, 60, 100, 108, 116, 124, 132, 140,
-			  149, 157, 165, 173, 184, 192 };
+
+	/* SW-3238/SW-4135: Expand the list to allow the rest of channels to use 40MHz band */
+	int allowed[] = { 36, 38, 40, 42, 44, 46, 48, 50, 52, 54, 56, 58, 60, 62, 64,
+				100, 102, 104, 106, 108, 110, 112, 114, 116, 118, 120, 122, 124,
+				126, 128, 132, 134, 136, 138, 140, 142, 144, 149, 151, 153, 155,
+				157, 159, 161, 165, 169, 173, 177, 184, 192 };
+
 	size_t k;
 	int ht40_plus, pri_chan, sec_chan;
 
@@ -477,7 +487,8 @@ void punct_update_legacy_bw(u16 bitmap, u8 pri, enum oper_chan_width *width,
 
 int hostapd_set_freq_params(struct hostapd_freq_params *data,
 			    enum hostapd_hw_mode mode,
-			    int freq, int channel, int enable_edmg,
+			    int freq, int freq_offset,
+			    int channel, int enable_edmg,
 			    u8 edmg_channel, int ht_enabled,
 			    int vht_enabled, int he_enabled,
 			    bool eht_enabled, int sec_channel_offset,
@@ -498,6 +509,7 @@ int hostapd_set_freq_params(struct hostapd_freq_params *data,
 	os_memset(data, 0, sizeof(*data));
 	data->mode = mode;
 	data->freq = freq;
+	data->freq_offset = freq_offset;
 	data->channel = channel;
 	data->ht_enabled = ht_enabled;
 	data->vht_enabled = vht_enabled;
@@ -520,6 +532,7 @@ int hostapd_set_freq_params(struct hostapd_freq_params *data,
 		data->bandwidth = 20;
 
 
+#ifndef MM_IOT
 	hostapd_encode_edmg_chan(enable_edmg, edmg_channel, channel,
 				 &data->edmg);
 
@@ -833,6 +846,7 @@ int hostapd_set_freq_params(struct hostapd_freq_params *data,
 		break;
 	}
 
+#endif /* MM_IOT */
 	return 0;
 }
 

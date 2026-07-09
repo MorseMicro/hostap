@@ -33,7 +33,7 @@ enum gas_query_result {
 	GAS_QUERY_DELETED_AT_DEINIT
 };
 
-int gas_query_req(struct gas_query *gas, const u8 *dst, int freq,
+int gas_query_req(struct gas_query *gas, const u8 *dst, int freq, int freq_offset,
 		  int wildcard_bssid, int maintain_addr, struct wpabuf *req,
 		  void (*cb)(void *ctx, const u8 *dst, u8 dialog_token,
 			     enum gas_query_result result,

@@ -1,6 +1,7 @@
 /*
  * WPA Supplicant - Common definitions
  * Copyright (c) 2004-2018, Jouni Malinen <j@w1.fi>
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -8,6 +9,10 @@
 
 #ifndef DEFS_H
 #define DEFS_H
+
+#define QOS_TRAFFIC_UP_SHIFT (4)
+#define QOS_TRAFFIC_UP_MASK (0x70)
+#define QOS_TRAFFIC_CAP_SIZE (3)
 
 #define WPA_CIPHER_NONE BIT(0)
 #define WPA_CIPHER_WEP40 BIT(1)
@@ -384,6 +389,7 @@ enum hostapd_hw_mode {
 	HOSTAPD_MODE_IEEE80211G,
 	HOSTAPD_MODE_IEEE80211A,
 	HOSTAPD_MODE_IEEE80211AD,
+	HOSTAPD_MODE_IEEE80211AH,
 	HOSTAPD_MODE_IEEE80211ANY,
 	NUM_HOSTAPD_MODES
 };
@@ -476,6 +482,11 @@ enum oper_chan_width {
 	CONF_OPER_CHWIDTH_8640MHZ,
 	CONF_OPER_CHWIDTH_40MHZ_6GHZ,
 	CONF_OPER_CHWIDTH_320MHZ,
+	CONF_OPER_CHWIDTH_1MHZ,
+	CONF_OPER_CHWIDTH_2MHZ,
+	CONF_OPER_CHWIDTH_4MHZ,
+	CONF_OPER_CHWIDTH_8MHZ,
+	CONF_OPER_CHWIDTH_16MHZ,
 };
 
 enum key_flag {
@@ -530,7 +541,9 @@ enum frame_encryption {
 	FRAME_ENCRYPTED = 1
 };
 
+#ifndef MAX_NUM_MLD_LINKS
 #define MAX_NUM_MLD_LINKS 15
+#endif
 
 enum sae_pwe {
 	SAE_PWE_HUNT_AND_PECK = 0,
@@ -550,5 +563,8 @@ enum wpa_p2p_mode {
 
 #define USEC_TO_TU(m) ((m) / USEC_80211_TU)
 #define TU_TO_USEC(m) ((m) * USEC_80211_TU)
+
+#define MHZ_TO_KHZ(x) ((x) * 1000)
+#define KHZ_TO_MHZ(x) ((x) / 1000)
 
 #endif /* DEFS_H */

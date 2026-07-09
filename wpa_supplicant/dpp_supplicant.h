@@ -14,6 +14,10 @@
 enum dpp_status_error;
 
 int wpas_dpp_qr_code(struct wpa_supplicant *wpa_s, const char *cmd);
+int wpas_dpp_bootstrap_gen(struct wpa_supplicant *wpa_s, const char *cmd);
+const char * wpas_dpp_bootstrap_get_uri(struct wpa_supplicant *wpa_s,
+					unsigned int id);
+int wpas_dpp_bootstrap_remove(struct wpa_supplicant *wpa_s, const char *id);
 int wpas_dpp_nfc_uri(struct wpa_supplicant *wpa_s, const char *cmd);
 int wpas_dpp_nfc_handover_req(struct wpa_supplicant *wpa_s, const char *cmd);
 int wpas_dpp_nfc_handover_sel(struct wpa_supplicant *wpa_s, const char *cmd);
@@ -21,12 +25,14 @@ int wpas_dpp_auth_init(struct wpa_supplicant *wpa_s, const char *cmd);
 int wpas_dpp_listen(struct wpa_supplicant *wpa_s, const char *cmd);
 void wpas_dpp_listen_stop(struct wpa_supplicant *wpa_s);
 void wpas_dpp_remain_on_channel_cb(struct wpa_supplicant *wpa_s,
-				   unsigned int freq, unsigned int duration);
+				   unsigned int freq, unsigned int freq_offset,
+				   unsigned int duration);
 void wpas_dpp_cancel_remain_on_channel_cb(struct wpa_supplicant *wpa_s,
 					  unsigned int freq);
 void wpas_dpp_tx_wait_expire(struct wpa_supplicant *wpa_s);
 void wpas_dpp_rx_action(struct wpa_supplicant *wpa_s, const u8 *src,
-			const u8 *buf, size_t len, unsigned int freq);
+			const u8 *buf, size_t len, unsigned int freq,
+			unsigned int freq_offset);
 int wpas_dpp_configurator_sign(struct wpa_supplicant *wpa_s, const char *cmd);
 int wpas_dpp_pkex_add(struct wpa_supplicant *wpa_s, const char *cmd);
 int wpas_dpp_pkex_remove(struct wpa_supplicant *wpa_s, const char *id);

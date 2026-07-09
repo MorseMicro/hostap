@@ -44,7 +44,7 @@ static int wpas_pasn_send_mlme(void *ctx, const u8 *data, size_t data_len,
 {
 	struct wpa_supplicant *wpa_s = ctx;
 
-	return wpa_drv_send_mlme(wpa_s, data, data_len, noack, freq, wait);
+	return wpa_drv_send_mlme(wpa_s, data, data_len, noack, freq, 0, wait);
 }
 
 
@@ -864,7 +864,7 @@ int wpas_pasn_auth_start(struct wpa_supplicant *wpa_s,
 		}
 	}
 
-	if (radio_add_work(wpa_s, bss->freq, "pasn-start-auth", 1,
+	if (radio_add_work(wpa_s, bss->freq, 0, "pasn-start-auth", 1,
 			   wpas_pasn_auth_start_cb, awork) < 0) {
 		wpas_pasn_free_auth_work(awork);
 		return -1;
@@ -1162,7 +1162,7 @@ int wpas_pasn_deauthenticate(struct wpa_supplicant *wpa_s, const u8 *own_addr,
 	 * without a radio work.
 	 */
 	ret = wpa_drv_send_mlme(wpa_s, wpabuf_head(buf), wpabuf_len(buf), 1,
-				bss->freq, 0);
+				bss->freq, 0, 0);
 
 	wpabuf_free(buf);
 	wpa_printf(MSG_DEBUG, "PASN: deauth: send_mlme ret=%d", ret);

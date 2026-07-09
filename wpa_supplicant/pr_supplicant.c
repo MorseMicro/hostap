@@ -591,7 +591,7 @@ int wpas_pr_initiate_pasn_auth(struct wpa_supplicant *wpa_s,
 	awork->auth_mode = auth_mode;
 	awork->forced_pr_freq = forced_pr_freq;
 
-	if (radio_add_work(wpa_s, freq, "pr-pasn-start-auth", 1,
+	if (radio_add_work(wpa_s, freq, 0, "pr-pasn-start-auth", 1,
 			   wpas_pr_pasn_auth_start_cb, awork) < 0) {
 		wpas_pr_pasn_free_auth_work(awork);
 		return -1;

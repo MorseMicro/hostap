@@ -621,6 +621,7 @@ static int sswu_curve_param(int group, int *z)
 static void debug_print_bignum(const char *title, const struct crypto_bignum *a,
 			       size_t prime_len)
 {
+#if !defined(CONFIG_NO_STDOUT_DEBUG)
 	u8 *bin;
 
 	bin = os_malloc(prime_len);
@@ -629,6 +630,7 @@ static void debug_print_bignum(const char *title, const struct crypto_bignum *a,
 	else
 		wpa_printf(MSG_DEBUG, "Could not print bignum (%s)", title);
 	bin_clear_free(bin, prime_len);
+#endif /* !CONFIG_NO_STDOUT_DEBUG */
 }
 
 

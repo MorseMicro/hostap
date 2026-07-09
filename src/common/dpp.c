@@ -3,6 +3,7 @@
  * Copyright (c) 2017, Qualcomm Atheros, Inc.
  * Copyright (c) 2018-2020, The Linux Foundation
  * Copyright (c) 2021-2022, Qualcomm Innovation Center, Inc.
+ * Copyright 2022 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -374,6 +375,9 @@ static int dpp_parse_uri_supported_curves(struct dpp_bootstrap_info *bi,
 
 static int dpp_parse_uri_host(struct dpp_bootstrap_info *bi, const char *txt)
 {
+#ifdef MM_IOT_DPP_DISABLE_URI_HOST
+	return 0;
+#endif
 	const char *end;
 	char *port;
 	struct hostapd_ip_addr addr;
@@ -696,7 +700,9 @@ int dpp_gen_uri(struct dpp_bootstrap_info *bi)
 	char macstr[ETH_ALEN * 2 + 10];
 	size_t len;
 	char supp_curves[10];
+#ifndef MM_IOT_DPP_DISABLE_URI_HOST
 	char host[100];
+#endif
 
 	len = 4; /* "DPP:" */
 	if (bi->chan)
@@ -729,6 +735,7 @@ int dpp_gen_uri(struct dpp_bootstrap_info *bi)
 		supp_curves[0] = '\0';
 	}
 
+#ifndef MM_IOT_DPP_DISABLE_URI_HOST
 	host[0] = '\0';
 	if (bi->host) {
 		char buf[100];
@@ -746,6 +753,7 @@ int dpp_gen_uri(struct dpp_bootstrap_info *bi)
 			len += os_snprintf(host, sizeof(host), "H:[%s]:%u;",
 					   addr, bi->port);
 	}
+#endif
 
 	os_free(bi->uri);
 	bi->uri = os_malloc(len + 1);
@@ -760,7 +768,11 @@ int dpp_gen_uri(struct dpp_bootstrap_info *bi)
 		    DPP_VERSION == 3 ? "V:3;" :
 		    (DPP_VERSION == 2 ? "V:2;" : ""),
 		    supp_curves,
+#ifndef MM_IOT_DPP_DISABLE_URI_HOST
 		    host,
+#else
+		    "",
+#endif
 		    bi->pk);
 	return 0;
 }
@@ -3135,6 +3147,17 @@ const char * dpp_akm_str(enum dpp_akm akm)
 }
 
 
+int dpp_akm_from_hapd_wpa_key(int wpa_key_mgmt)
+{
+	if (wpa_key_mgmt & WPA_KEY_MGMT_SAE)
+		return DPP_AKM_SAE;
+	if (wpa_key_mgmt & WPA_KEY_MGMT_DPP)
+		return DPP_AKM_DPP;
+
+	return DPP_AKM_UNKNOWN;
+}
+
+
 const char * dpp_akm_selector_str(enum dpp_akm akm)
 {
 	switch (akm) {
@@ -3331,7 +3354,7 @@ static int dpp_parse_conf_obj(struct dpp_authentication *auth,
 		   (auth->peer_version >= 2 && dpp_akm_legacy(conf->akm))) {
 		if (dpp_parse_cred_dpp(auth, conf, cred) < 0)
 			goto fail;
-#ifdef CONFIG_DPP2
+#if  defined(CONFIG_DPP2) && !defined(MM_IOT_DPP_DISABLE_DOT1X)
 	} else if (conf->akm == DPP_AKM_DOT1X) {
 		if (dpp_parse_cred_dot1x(auth, conf, cred) < 0 ||
 		    dpp_parse_cred_dpp(auth, conf, cred) < 0)
@@ -5101,7 +5124,7 @@ void dpp_global_clear(struct dpp_global *dpp)
 
 	dpp_bootstrap_del(dpp, 0);
 	dpp_configurator_del(dpp, 0);
-#ifdef CONFIG_DPP2
+#if defined(CONFIG_DPP2) && !defined(MM_IOT_DPP_DISABLE_TCP)
 	dpp_tcp_init_flush(dpp);
 	dpp_relay_flush_controllers(dpp);
 	dpp_controller_stop(dpp);

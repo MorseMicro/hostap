@@ -49,6 +49,8 @@ static void ap_sta_disassoc_cb_timeout(void *eloop_ctx, void *timeout_ctx);
 static void ap_sa_query_timer(void *eloop_ctx, void *timeout_ctx);
 static int ap_sta_remove(struct hostapd_data *hapd, struct sta_info *sta);
 static void ap_sta_delayed_1x_auth_fail_cb(void *eloop_ctx, void *timeout_ctx);
+static void ap_sta_remove_in_other_ifaces(struct hostapd_data *hapd,
+			struct sta_info *sta);
 
 int ap_for_each_sta(struct hostapd_data *hapd,
 		    int (*cb)(struct hostapd_data *hapd, struct sta_info *sta,
@@ -919,6 +921,7 @@ struct sta_info * ap_sta_add(struct hostapd_data *hapd, const u8 *addr)
 	hapd->sta_list = sta;
 	hapd->num_sta++;
 	ap_sta_hash_add(hapd, sta);
+	ap_sta_remove_in_other_ifaces(hapd, sta);
 	ap_sta_remove_in_other_bss(hapd, sta);
 	sta->last_seq_ctrl = WLAN_INVALID_MGMT_SEQ;
 	dl_list_init(&sta->ip6addr);
@@ -934,6 +937,43 @@ struct sta_info * ap_sta_add(struct hostapd_data *hapd, const u8 *addr)
 	return sta;
 }
 
+
+static void ap_sta_remove_in_other_ifaces(struct hostapd_data *hapd,
+			struct sta_info *sta)
+{
+	size_t i;
+	struct hapd_interfaces *interfaces;
+
+	if (hapd->iface->interfaces == NULL)
+		return;
+
+	interfaces = hapd->iface->interfaces;
+
+	for (i = 0; i < interfaces->count; ++i) {
+		struct hostapd_data *bss;
+		struct sta_info *sta2;
+		struct hostapd_iface *iface = interfaces->iface[i];
+
+		if (iface == NULL || hapd->iface == iface)
+			continue;
+
+		bss = iface->bss[0];
+
+		if (bss == NULL)
+			continue;
+
+		sta2 = ap_get_sta(bss, sta->addr);
+		if (!sta2)
+			continue;
+
+		wpa_printf(MSG_DEBUG, "%s: disconnect old STA " MACSTR
+			   " association from another interface %s",
+			   hapd->conf->iface,  MAC2STR(sta2->addr),
+			   bss->conf->iface);
+		ap_sta_disconnect(bss, sta2, sta2->addr,
+				  WLAN_REASON_PREV_AUTH_NOT_VALID);
+	}
+}
 
 static int ap_sta_remove(struct hostapd_data *hapd, struct sta_info *sta)
 {

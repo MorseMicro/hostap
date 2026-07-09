@@ -423,7 +423,8 @@ struct pr_config {
 	 * Returns: 0 on success, -1 on failure
 	 */
 	int (*pasn_send_mgmt)(void *ctx, const u8 *data, size_t data_len,
-			      int noack, unsigned int freq, unsigned int wait);
+			      int noack, unsigned int freq, unsigned int freq_offset,
+			      unsigned int wait);
 
 	void (*pasn_result)(void *ctx, u8 role, u8 protocol_type, u8 op_class,
 			    u8 op_channel, const char *country);

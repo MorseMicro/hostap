@@ -1,6 +1,7 @@
 /*
  * hostapd / IEEE 802.11 Management
  * Copyright (c) 2002-2017, Jouni Malinen <j@w1.fi>
+ * Copyright 2021 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -61,6 +62,7 @@
 #include "comeback_token.h"
 #include "nan_usd_ap.h"
 #include "pasn/pasn_common.h"
+#include "utils/morse.h"
 
 
 #ifdef CONFIG_FILS
@@ -134,7 +136,8 @@ static size_t hostapd_supp_rates(struct hostapd_data *hapd, u8 *buf)
 		pos++;
 	}
 
-	if (hapd->iconf->ieee80211n && hapd->iconf->require_ht)
+	if ((hapd->iconf->ieee80211n || hapd->iconf->ieee80211ah) &&
+	    hapd->iconf->require_ht)
 		*pos++ = 0x80 | BSS_MEMBERSHIP_SELECTOR_HT_PHY;
 
 	if (hapd->iconf->ieee80211ac && hapd->iconf->require_vht)
@@ -1667,6 +1670,7 @@ static void handle_auth_sae(struct hostapd_data *hapd, struct sta_info *sta,
 
 	if (hapd->conf->sae_commit_override && auth_transaction == 1) {
 		wpa_printf(MSG_DEBUG, "SAE: TESTING - commit override");
+		resp = status_code;
 		send_auth_reply(hapd, sta, sta->addr,
 				WLAN_AUTH_SAE,
 				auth_transaction, resp,
@@ -3429,7 +3433,7 @@ static void handle_auth(struct hostapd_data *hapd,
 				phytype = 8; /* dmg */
 			else if (other->iconf->ieee80211ac)
 				phytype = 9; /* vht */
-			else if (other->iconf->ieee80211n)
+			else if (other->iconf->ieee80211n || other->iconf->ieee80211ah)
 				phytype = 7; /* ht */
 			else if (other->iconf->hw_mode ==
 				 HOSTAPD_MODE_IEEE80211A)
@@ -3801,6 +3805,122 @@ static u32 hostapd_get_aid_word(struct hostapd_data *hapd,
 	return hapd->sta_aid[i];
 }
 
+#ifdef CONFIG_IEEE80211AH
+  /* Assign an AID to a STA when RAW is enabled, based on an 'Optimized Opposite Direction
+   * AID Allocation' algorithm, to maximise the number of STAs that can join a RAW group.
+   * Adjacent priorities grow towards each other, and when they overflow, adjacent group AID
+   * assignment fails.
+   * Even priority group AIDs are assigned in ascending order. I.e. select the first bit of
+   * the first AID word and grow forwards up to the maximum limit of the adjacent group.
+   * Odd priority group AIDs are assigned in descending order. I.e. select the last bit of
+   * the last AID word and grow backwards down to the minimum limit of the adjacent group.
+   *
+   * | Priority | AID Range        | Allocation Direction      |
+   * |----------|----------------- |---------------------------|
+   * | 0        | 1 - 256          | Ascending  (1 - 512)      |
+   * | 1        | 512 - 257        | Descending (512 - 1)      |
+   * | 2        | 513 - 768        | Ascending  (513 - 1024)   |
+   * | 3        | 1024 - 769       | Descending (1024 - 513)   |
+   * | 4        | 1025 - 1280      | Ascending  (1025 - 1536)  |
+   * | 5        | 1536 - 1281      | Descending (1536 - 1025)  |
+   * | 6        | 1537 - 1792      | Ascending  (1537 - 2007)  |
+   * | 7        | 2007 - 1793      | Descending (2007 - 1537)  |
+   */
+static int hostapd_get_raw_aid(struct hostapd_data *hapd, struct sta_info *sta)
+{
+	int i, j = 0, aid, counter_start, counter_stop;
+	u8 priority_group = sta->raw_priority;
+	u32 group_start = priority_group * RAW_GROUP_SIZE;
+	u32 group_end = MIN(group_start + RAW_GROUP_SIZE, MAX_AID);
+	/* AID is allowed to overflow to the adjacent priority group.
+	 * Set limit to avoid overflow to next group.
+	 */
+	int aid_overflow = (priority_group % 2) ? MAX(group_end - (RAW_AID_SPILL_RANGE - 1), 0) :
+				MIN(group_start + RAW_AID_SPILL_RANGE, MAX_AID);
+
+	assert(MAX_AID % BITS_PER_WORD != 0);
+
+	if (priority_group > RAW_PRIORITY_GROUP_MAX)
+		return -1;
+
+	if (priority_group % 2 == 0) {
+		counter_start = priority_group * RAW_GROUP_SIZE / BITS_PER_WORD;
+		counter_stop = MIN((counter_start + (RAW_AID_SPILL_RANGE / BITS_PER_WORD)),
+				AID_WORDS);
+	} else {
+		counter_stop = ((priority_group - 1) * (RAW_GROUP_SIZE / BITS_PER_WORD));
+		counter_start = MIN((counter_stop + (RAW_AID_SPILL_RANGE / BITS_PER_WORD)),
+				AID_WORDS) - 1;
+	}
+
+	if (priority_group == RAW_PRIORITY_GROUP_MAX) {
+		/* Handle priority 7 separately as it has less number of AIDs */
+		int possible_group_end = group_start + RAW_GROUP_SIZE;
+
+		aid_overflow = MAX(possible_group_end - (RAW_AID_SPILL_RANGE - 1), 0);
+		counter_start = MAX_AID / BITS_PER_WORD;
+	}
+
+	if (priority_group % 2 == 0) {
+		/* Even group: ascending AID range */
+		for (i = counter_start; i < counter_stop; i++) {
+			if (hapd->sta_aid[i] == (u32) -1)
+				continue;
+			for (j = 0; j < BITS_PER_WORD; j++) {
+				if (!(hapd->sta_aid[i] & BIT(j)))
+					break;
+			}
+			if (j < BITS_PER_WORD)
+				break;
+		}
+
+		aid = i * BITS_PER_WORD + j + 1;
+		if (aid > aid_overflow)
+			return -1;
+	} else {
+		/* Odd group: descending AID range */
+		for (i = counter_start; i >= counter_stop; i--) {
+			/* Priority group 7 can allocate AIDs only upto MAX_AID value 2007,
+			 * while the AID value can reach upto maximum value 64 * 32 = 2048.
+			 * If the AID assignment starts with these maximum values then
+			 * assignment overflows to invalid word. To handle group 7 separately
+			 * start the AID assignment at BIT 22 of AID word 62 which maps to bit
+			 * assignment of value 2007. Maximum value of AID word 62 is
+			 * 0x007fffff (1U << 23) - 1)).
+			 */
+			bool is_max_aid_word = (priority_group == RAW_PRIORITY_GROUP_MAX &&
+					i == counter_start);
+			u32 start_bit = (is_max_aid_word ? (MAX_AID % BITS_PER_WORD) - 1 :
+					BITS_PER_WORD - 1);
+
+			if (is_max_aid_word &&
+			    (hapd->sta_aid[i] == (1U << MAX_AID % BITS_PER_WORD) - 1))
+				continue;
+			else if (hapd->sta_aid[i] == (u32) -1)
+				continue;
+
+			for (j = start_bit; j >= 0; j--) {
+				if (!(hapd->sta_aid[i] & BIT(j)))
+					break;
+			}
+			if (j >= 0)
+				break;
+		}
+		aid = (i * BITS_PER_WORD) + j + 1;
+		if (aid < aid_overflow)
+			return -1;
+	}
+
+	if (aid > MAX_AID || aid < 0)
+		return -1;
+
+	sta->aid = aid;
+	hapd->sta_aid[i] |= BIT(j);
+	wpa_printf(MSG_DEBUG, "  new RAW AID %d", sta->aid);
+
+	return 0;
+}
+#endif
 
 int hostapd_get_aid(struct hostapd_data *hapd, struct sta_info *sta)
 {
@@ -3820,6 +3940,11 @@ int hostapd_get_aid(struct hostapd_data *hapd, struct sta_info *sta)
 	if (TEST_FAIL())
 		return -1;
 
+#ifdef CONFIG_IEEE80211AH
+	if (hapd->conf->raw_enabled)
+		return hostapd_get_raw_aid(hapd, sta);
+#endif
+
 	for (i = 0; i < AID_WORDS; i++) {
 		u32 aid_word = hostapd_get_aid_word(hapd, sta, i);
 
@@ -3832,6 +3957,7 @@ int hostapd_get_aid(struct hostapd_data *hapd, struct sta_info *sta)
 		if (j < 32)
 			break;
 	}
+
 	if (j == 32)
 		return -1;
 	aid = i * 32 + j + (1 << hostapd_max_bssid_indicator(hapd));
@@ -4383,6 +4509,24 @@ static bool check_sa_query(struct hostapd_data *hapd, struct sta_info *sta,
 	return false;
 }
 
+#ifdef CONFIG_IEEE80211AH
+static u16 process_qos_traffic_cap(struct hostapd_data *hapd, struct sta_info *sta,
+				   const u8 *qos_tc_ie, size_t qos_tc_len)
+{
+	if (qos_tc_len == 0) {
+		sta->raw_priority = 0;
+		wpa_printf(MSG_DEBUG, "No QoS Traffic Cap UP using default: %u",
+			   sta->raw_priority);
+	} else {
+		sta->raw_priority =
+			(*qos_tc_ie & QOS_TRAFFIC_UP_MASK) >> QOS_TRAFFIC_UP_SHIFT;
+
+		wpa_printf(MSG_DEBUG, "QoS Traffic Cap UP: %u", sta->raw_priority);
+	}
+
+	return WLAN_STATUS_SUCCESS;
+}
+#endif
 
 static int __check_assoc_ies(struct hostapd_data *hapd, struct sta_info *sta,
 			     const u8 *ies, size_t ies_len,
@@ -4419,8 +4563,8 @@ static int __check_assoc_ies(struct hostapd_data *hapd, struct sta_info *sta,
 	resp = copy_sta_ht_capab(hapd, sta, elems->ht_capabilities);
 	if (resp != WLAN_STATUS_SUCCESS)
 		goto out;
-	if (hapd->iconf->ieee80211n && hapd->iconf->require_ht &&
-	    !(sta->flags & WLAN_STA_HT)) {
+	if ((hapd->iconf->ieee80211n ||  hapd->iconf->ieee80211ah) &&
+	    hapd->iconf->require_ht && !(sta->flags & WLAN_STA_HT)) {
 		hostapd_logger(hapd, sta->addr, HOSTAPD_MODULE_IEEE80211,
 			       HOSTAPD_LEVEL_INFO, "Station does not support "
 			       "mandatory HT PHY - reject association");
@@ -4505,6 +4649,22 @@ static int __check_assoc_ies(struct hostapd_data *hapd, struct sta_info *sta,
 		}
 	}
 #endif /* CONFIG_IEEE80211BE */
+#ifdef CONFIG_IEEE80211AH
+	if (hapd->iconf->ieee80211ah && hapd->conf->max_away_duration) {
+		u16 mad = 0;
+
+		if (elems->max_away_duration)
+			mad = WPA_GET_LE16(elems->max_away_duration);
+
+		if (mad < hapd->conf->max_away_duration) {
+			hostapd_logger(hapd, sta->addr,
+				       HOSTAPD_MODULE_IEEE80211,
+				       HOSTAPD_LEVEL_INFO,
+				       "Station does not support max away duration - reject association");
+			return WLAN_STATUS_REJECTED_MAX_AWAY_DURATION_UNACCEPTABLE;
+		}
+	}
+#endif /* CONFIG_IEEE80211AH */
 
 #ifdef CONFIG_P2P
 	if (elems->p2p && ies && ies_len) {
@@ -4877,6 +5037,19 @@ skip_wpa_ies:
 		}
 	}
 #endif /* CONFIG_FILS && CONFIG_OCV */
+
+#ifdef CONFIG_IEEE80211AH
+	if (hapd->conf->raw_enabled) {
+		wpa_printf(MSG_DEBUG, "RAW enabled, reading QoS traffic cap");
+		resp = process_qos_traffic_cap(hapd, sta,
+					       elems->qos_traffic_cap,
+					       elems->qos_traffic_cap_len);
+		if (resp != WLAN_STATUS_SUCCESS)
+			return resp;
+	} else {
+		wpa_printf(MSG_DEBUG, "RAW disabled, don't read QoS traffic cap");
+	}
+#endif /* CONFIG_IEEE80211AH */
 
 	ap_copy_sta_supp_op_classes(sta, elems->supp_op_classes,
 				    elems->supp_op_classes_len);
@@ -5311,6 +5484,8 @@ static int add_associated_sta(struct hostapd_data *hapd,
 	if (!mld_link_sta && !sta->added_unassoc &&
 	    (!(sta->flags & WLAN_STA_AUTHORIZED) ||
 	     (reassoc && sta->ft_over_ds && sta->auth_alg == WLAN_AUTH_FT) ||
+	     (!reassoc && (sta->flags & WLAN_STA_ASSOC) &&
+	      wpa_auth_sta_ft_tk_already_set(sta->wpa_sm)) ||
 	     (!wpa_auth_sta_ft_tk_already_set(sta->wpa_sm) &&
 	      !wpa_auth_sta_fils_tk_already_set(sta->wpa_sm)))) {
 		hostapd_drv_sta_remove(hapd, sta->addr);
@@ -5539,6 +5714,11 @@ static u16 send_assoc_resp(struct hostapd_data *hapd, struct sta_info *sta,
 					    sta ? sta->max_idle_period : 0);
 	if (sta && sta->qos_map_enabled)
 		p = hostapd_eid_qos_map_set(hapd, p);
+
+#ifdef CONFIG_IEEE80211AH
+	if (hapd->iconf->ieee80211ah && hapd->conf->max_away_duration)
+		p = hostapd_eid_max_away_duration(hapd, p);
+#endif
 
 #ifdef CONFIG_FST
 	if (hapd->iface->fst_ies) {
@@ -6051,6 +6231,11 @@ static void handle_assoc(struct hostapd_data *hapd,
 			return;
 		}
 	}
+
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+	/* Workaround for using VHT capabilities at lower bandwidths. */
+	sta->flags |= WLAN_STA_VHT;
+#endif
 
 	if ((fc & WLAN_FC_RETRY) &&
 	    sta->last_seq_ctrl != WLAN_INVALID_MGMT_SEQ &&
@@ -6891,7 +7076,7 @@ int ieee802_11_mgmt(struct hostapd_data *hapd, const u8 *buf, size_t len,
 	}
 
 	if (stype == WLAN_FC_STYPE_PROBE_REQ) {
-		handle_probe_req(hapd, mgmt, len, ssi_signal);
+		handle_probe_req(hapd, mgmt, len, ssi_signal, freq);
 		return 1;
 	}
 
@@ -9087,5 +9272,20 @@ u8 * hostapd_eid_mbssid(struct hostapd_data *hapd_probed, u8 *eid, u8 *end,
 
 	return eid;
 }
+
+u8 * hostapd_eid_max_away_duration(struct hostapd_data *hapd, u8 *eid)
+{
+	u8 *pos = eid;
+
+#ifdef CONFIG_IEEE80211AH
+	*pos++ = WLAN_EID_S1G_MAX_AWAY_DURATION;
+	*pos++ = 2;
+
+	WPA_PUT_LE16(pos, hapd->conf->max_away_duration);
+	pos += 2;
+#endif
+	return pos;
+}
+
 
 #endif /* CONFIG_NATIVE_WINDOWS */

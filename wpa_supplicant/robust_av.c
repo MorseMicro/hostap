@@ -353,7 +353,7 @@ int wpas_send_mscs_req(struct wpa_supplicant *wpa_s)
 	wpas_populate_mscs_descriptor_ie(&wpa_s->robust_av, buf);
 
 	wpa_hexdump_buf(MSG_MSGDUMP, "MSCS Request", buf);
-	ret = wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, wpa_s->bssid,
+	ret = wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, 0, wpa_s->bssid,
 				  wpa_s->own_addr, wpa_s->bssid,
 				  wpabuf_head(buf), wpabuf_len(buf), 0);
 	if (ret < 0)
@@ -621,7 +621,7 @@ static int _wpa_send_scs_req(struct wpa_supplicant *wpa_s,
 	}
 
 	wpa_hexdump_buf(MSG_DEBUG, "SCS Request", buf);
-	ret = wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, wpa_s->bssid,
+	ret = wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, 0, wpa_s->bssid,
 				  wpa_s->own_addr, wpa_s->bssid,
 				  wpabuf_head(buf), wpabuf_len(buf), 0);
 	if (ret < 0) {
@@ -1249,22 +1249,6 @@ static int write_ipv6_info(char *pos, int total_len,
 }
 
 
-struct dscp_policy_data {
-	u8 policy_id;
-	u8 req_type;
-	u8 dscp;
-	bool dscp_info;
-	const u8 *frame_classifier;
-	u8 frame_classifier_len;
-	struct type4_params type4_param;
-	const u8 *domain_name;
-	u8 domain_name_len;
-	u16 start_port;
-	u16 end_port;
-	bool port_range_info;
-};
-
-
 static int set_frame_classifier_type4_ipv4(struct dscp_policy_data *policy)
 {
 	u8 classifier_mask;
@@ -1807,7 +1791,7 @@ int wpas_send_dscp_response(struct wpa_supplicant *wpa_s,
 	}
 
 	wpa_hexdump_buf(MSG_MSGDUMP, "DSCP response frame: ", buf);
-	ret = wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, wpa_s->bssid,
+	ret = wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, 0, wpa_s->bssid,
 				  wpa_s->own_addr, wpa_s->bssid,
 				  wpabuf_head(buf), wpabuf_len(buf), 0);
 	if (ret < 0) {
@@ -1888,7 +1872,7 @@ int wpas_send_dscp_query(struct wpa_supplicant *wpa_s, const char *domain_name,
 	}
 #undef DOMAIN_NAME_OFFSET
 
-	ret = wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, wpa_s->bssid,
+	ret = wpa_drv_send_action(wpa_s, wpa_s->assoc_freq, 0, 0, wpa_s->bssid,
 				  wpa_s->own_addr, wpa_s->bssid,
 				  wpabuf_head(buf), wpabuf_len(buf), 0);
 	if (ret < 0) {

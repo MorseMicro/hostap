@@ -787,7 +787,7 @@ static int dpp_controller_rx_auth_req(struct dpp_connection *conn,
 	conn->auth = dpp_auth_req_rx(conn->ctrl->global, conn->msg_ctx,
 				     conn->ctrl->allowed_roles,
 				     conn->ctrl->qr_mutual,
-				     peer_bi, own_bi, -1, hdr, buf, len);
+				     peer_bi, own_bi, -1, 0, hdr, buf, len);
 	if (!conn->auth) {
 		wpa_printf(MSG_DEBUG, "DPP: No response generated");
 		return -1;
@@ -1178,7 +1178,7 @@ static int dpp_controller_rx_pkex_commit_reveal_req(struct dpp_connection *conn,
 	wpabuf_free(msg);
 	if (res < 0)
 		return res;
-	bi = dpp_pkex_finish(conn->global, pkex, NULL, 0);
+	bi = dpp_pkex_finish(conn->global, pkex, NULL, 0, 0);
 	if (!bi)
 		return -1;
 	conn->pkex = NULL;
@@ -1208,7 +1208,7 @@ dpp_controller_rx_pkex_commit_reveal_resp(struct dpp_connection *conn,
 		return res;
 	}
 
-	bi = dpp_pkex_finish(conn->global, pkex, NULL, 0);
+	bi = dpp_pkex_finish(conn->global, pkex, NULL, 0, 0);
 	if (!bi)
 		return -1;
 	conn->pkex = NULL;

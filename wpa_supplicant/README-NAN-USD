@@ -64,7 +64,7 @@ allow optimized radio use for parallel operations during provisioning
 sequence when no SDF is expected to be received from the peer during the
 other operations. NAN_TRANSMIT can used to re-enable listen operations.
 
-NAN_SUBSCRIBE service_name=<name> [active=1] [ttl=<time-to-live-in-sec>] [freq=<in MHz>] [srv_proto_type=<type>] [ssi=<service specific information (hexdump)>]
+NAN_SUBSCRIBE service_name=<name> [active=1] [ttl=<time-to-live-in-sec>] [freq=<in MHz>] [freq_list=<comma separate list of MHz>] [srv_proto_type=<type>] [ssi=<service specific information (hexdump)>]
 
 If ttl=0 or the parameter is not included, operation is terminated once
 the first matching publisher is found.

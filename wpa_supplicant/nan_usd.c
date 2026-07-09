@@ -18,7 +18,7 @@
 #include "p2p_supplicant.h"
 #include "nan_usd.h"
 #include "pr_supplicant.h"
-
+#include "scan.h"
 
 static const char *
 tx_status_result_txt(enum offchannel_send_action_result result)
@@ -37,7 +37,8 @@ tx_status_result_txt(enum offchannel_send_action_result result)
 
 
 static void wpas_nan_de_tx_status(struct wpa_supplicant *wpa_s,
-				  unsigned int freq, const u8 *dst,
+				  unsigned int freq, unsigned int freq_offset,
+				  const u8 *dst,
 				  const u8 *src, const u8 *bssid,
 				  const u8 *data, size_t data_len,
 				  enum offchannel_send_action_result result)
@@ -46,8 +47,8 @@ static void wpas_nan_de_tx_status(struct wpa_supplicant *wpa_s,
 		return;
 
 	wpa_printf(MSG_DEBUG, "NAN: TX status A1=" MACSTR " A2=" MACSTR
-		   " A3=" MACSTR " freq=%d len=%zu result=%s",
-		   MAC2STR(dst), MAC2STR(src), MAC2STR(bssid), freq,
+		   " A3=" MACSTR " freq=%u freq_offset=%u len=%zu result=%s",
+		   MAC2STR(dst), MAC2STR(src), MAC2STR(bssid), freq, freq_offset,
 		   data_len, tx_status_result_txt(result));
 
 	nan_de_tx_status(wpa_s->nan_de, freq, dst);
@@ -97,7 +98,7 @@ static int wpas_nan_de_tx_send(struct wpa_supplicant *wpa_s, unsigned int freq,
 		   MAC2STR(dst), MAC2STR(src), MAC2STR(bssid), freq,
 		   wpabuf_len(buf));
 
-	return offchannel_send_action(wpa_s, freq, dst, src, bssid,
+	return offchannel_send_action(wpa_s, freq, 0, dst, src, bssid,
 				      wpabuf_head(buf), wpabuf_len(buf),
 				      wait_time, wpas_nan_de_tx_status, 1);
 }
@@ -153,7 +154,7 @@ static int wpas_nan_de_tx(void *ctx, unsigned int freq, unsigned int wait_time,
 		return -1;
 	}
 
-	if (radio_add_work(wpa_s, freq, "nan-usd-tx", 0,
+	if (radio_add_work(wpa_s, freq, 0, "nan-usd-tx", 0,
 			   wpas_nan_usd_start_tx_cb, twork) < 0) {
 		wpas_nan_usd_tx_work_free(twork);
 		return -1;
@@ -216,7 +217,7 @@ static void wpas_nan_usd_start_listen_cb(struct wpa_radio_work *work,
 		duration = wpa_s->max_remain_on_chan;
 	wpa_printf(MSG_DEBUG, "NAN: Start listen on %u MHz for %u ms",
 		   lwork->freq, duration);
-	if (wpa_drv_remain_on_channel(wpa_s, lwork->freq, duration) < 0) {
+	if (wpa_drv_remain_on_channel(wpa_s, lwork->freq, 0, duration) < 0) {
 		wpa_printf(MSG_DEBUG,
 			   "NAN: Failed to request the driver to remain on channel (%u MHz) for listen",
 			   lwork->freq);
@@ -244,7 +245,7 @@ static int wpas_nan_de_listen(void *ctx, unsigned int freq,
 	lwork->freq = freq;
 	lwork->duration = duration;
 
-	if (radio_add_work(wpa_s, freq, "nan-usd-listen", 0,
+	if (radio_add_work(wpa_s, freq, 0, "nan-usd-listen", 0,
 			   wpas_nan_usd_start_listen_cb, lwork) < 0) {
 		os_free(lwork);
 		return -1;
@@ -438,6 +439,9 @@ int wpas_nan_usd_publish(struct wpa_supplicant *wpa_s, const char *service_name,
 		elems = wpas_pr_usd_elems(wpa_s);
 	}
 
+	/* Cancel Scan to speed NAN up */
+	wpa_supplicant_cancel_sched_scan(wpa_s);
+
 	publish_id = nan_de_publish(wpa_s->nan_de, service_name, srv_proto_type,
 				    ssi, elems, params, p2p);
 	if (publish_id >= 1 &&
@@ -553,6 +557,9 @@ int wpas_nan_usd_subscribe(struct wpa_supplicant *wpa_s,
 	} else if (params->proximity_ranging) {
 		elems = wpas_pr_usd_elems(wpa_s);
 	}
+
+	/* Cancel Scan to speed NAN up */
+	wpa_supplicant_cancel_sched_scan(wpa_s);
 
 	subscribe_id = nan_de_subscribe(wpa_s->nan_de, service_name,
 					srv_proto_type, ssi, elems, params,

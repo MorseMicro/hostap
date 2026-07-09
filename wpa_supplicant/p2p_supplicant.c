@@ -535,7 +535,7 @@ static int wpas_p2p_scan(void *ctx, enum p2p_scan_type type, int freq,
 	wpabuf_free(ies);
 
 	radio_remove_works(wpa_s, "p2p-scan", 0);
-	if (radio_add_work(wpa_s, 0, "p2p-scan", 0, wpas_p2p_trigger_scan_cb,
+	if (radio_add_work(wpa_s, 0, 0, "p2p-scan", 0, wpas_p2p_trigger_scan_cb,
 			   params) < 0)
 		goto fail;
 	return 0;
@@ -1726,6 +1726,7 @@ static void wpas_p2p_action_tx_clear(struct wpa_supplicant *wpa_s)
 
 static void wpas_p2p_send_action_tx_status(struct wpa_supplicant *wpa_s,
 					   unsigned int freq,
+					   unsigned int freq_offset,
 					   const u8 *dst, const u8 *src,
 					   const u8 *bssid,
 					   const u8 *data, size_t data_len,
@@ -1786,7 +1787,7 @@ static void wpas_send_action_cb(struct wpa_radio_work *work, int deinit)
 		return;
 	}
 
-	if (offchannel_send_action(wpa_s, awork->freq, awork->dst, awork->src,
+	if (offchannel_send_action(wpa_s, awork->freq, 0, awork->dst, awork->src,
 				   awork->bssid, awork->buf, awork->len,
 				   awork->wait_time,
 				   wpas_p2p_send_action_tx_status, 1) < 0) {
@@ -1822,7 +1823,7 @@ static int wpas_send_action_work(struct wpa_supplicant *wpa_s,
 	awork->wait_time = wait_time;
 	os_memcpy(awork->buf, buf, len);
 
-	if (radio_add_work(wpa_s, freq, "p2p-send-action", 1,
+	if (radio_add_work(wpa_s, freq, 0, "p2p-send-action", 1,
 			   wpas_send_action_cb, awork) < 0) {
 		os_free(awork);
 		return -1;
@@ -1861,7 +1862,7 @@ static int wpas_send_action(void *ctx, unsigned int freq, const u8 *dst,
 	}
 
 	wpa_printf(MSG_DEBUG, "P2P: Use ongoing radio work for Action frame TX");
-	return offchannel_send_action(wpa_s, freq, dst, src, bssid, buf, len,
+	return offchannel_send_action(wpa_s, freq, 0, dst, src, bssid, buf, len,
 				      wait_time,
 				      wpas_p2p_send_action_tx_status, 1);
 }
@@ -1988,7 +1989,7 @@ static int wpas_p2p_initiate_pasn_auth(struct wpa_supplicant *wpa_s,
 	awork->freq = freq;
 	os_memcpy(awork->peer_addr, peer_addr, ETH_ALEN);
 
-	if (radio_add_work(wpa_s, freq, "p2p-pasn-start-auth", 1,
+	if (radio_add_work(wpa_s, freq, 0, "p2p-pasn-start-auth", 1,
 			   wpas_p2p_pasn_auth_start_cb, awork) < 0) {
 		wpas_p2p_pasn_free_auth_work(awork);
 		return -1;
@@ -3238,7 +3239,7 @@ static void wpas_start_listen_cb(struct wpa_radio_work *work, int deinit)
 	}
 #endif /* CONFIG_TESTING_OPTIONS */
 
-	if (wpa_drv_remain_on_channel(wpa_s, lwork->freq, duration) < 0) {
+	if (wpa_drv_remain_on_channel(wpa_s, lwork->freq, 0, duration) < 0) {
 		wpa_printf(MSG_DEBUG, "P2P: Failed to request the driver "
 			   "to remain on channel (%u MHz) for Listen "
 			   "state", lwork->freq);
@@ -3277,7 +3278,7 @@ static int wpas_start_listen(void *ctx, unsigned int freq,
 		}
 	}
 
-	if (radio_add_work(wpa_s, freq, "p2p-listen", 0, wpas_start_listen_cb,
+	if (radio_add_work(wpa_s, freq, 0, "p2p-listen", 0, wpas_start_listen_cb,
 			   lwork) < 0) {
 		wpas_p2p_listen_work_free(lwork);
 		return -1;
@@ -3322,7 +3323,7 @@ static int wpas_send_probe_resp(void *ctx, const struct wpabuf *buf,
 {
 	struct wpa_supplicant *wpa_s = ctx;
 	return wpa_drv_send_mlme(wpa_s, wpabuf_head(buf), wpabuf_len(buf), 1,
-				 freq, 0);
+				 freq, 0, 0);
 }
 
 
@@ -5649,7 +5650,7 @@ static int wpas_p2p_initiate_pasn_verify(struct wpa_supplicant *wpa_s,
 		awork->ssid_len = ssid_len;
 	}
 
-	if (radio_add_work(wpa_s, freq, "p2p-pasn-start-auth", 1,
+	if (radio_add_work(wpa_s, freq, 0, "p2p-pasn-start-auth", 1,
 			   wpas_p2p_pasn_auth_start_cb, awork) < 0) {
 		wpas_p2p_pasn_free_auth_work(awork);
 		return -1;
@@ -5666,7 +5667,7 @@ static int wpas_p2p_pasn_send_mgmt(void *ctx, const u8 *data, size_t data_len,
 {
 	struct wpa_supplicant *wpa_s = ctx;
 
-	return wpa_drv_send_mlme(wpa_s, data, data_len, noack, freq, wait);
+	return wpa_drv_send_mlme(wpa_s, data, data_len, noack, freq, 0, wait);
 }
 
 

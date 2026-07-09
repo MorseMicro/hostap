@@ -439,7 +439,7 @@ dpp_reconfig_auth_req_rx(struct dpp_global *dpp, void *msg_ctx,
 			 const char *own_connector,
 			 const u8 *net_access_key, size_t net_access_key_len,
 			 const u8 *csign_key, size_t csign_key_len,
-			 unsigned int freq, const u8 *hdr,
+			 unsigned int freq, unsigned int freq_offset, const u8 *hdr,
 			 const u8 *attr_start, size_t attr_len)
 {
 	struct dpp_authentication *auth = NULL;

@@ -49,6 +49,7 @@ struct gas_query_pending {
 	unsigned int sent:1;
 	unsigned int radio_work_removal_scheduled:1;
 	int freq;
+	int freq_offset;
 	u16 status_code;
 	struct wpabuf *req;
 	struct wpabuf *adv_proto;
@@ -244,7 +245,8 @@ static int gas_query_append(struct gas_query_pending *query, const u8 *data,
 
 
 static void gas_query_tx_status(struct wpa_supplicant *wpa_s,
-				unsigned int freq, const u8 *dst,
+				unsigned int freq, unsigned int freq_offset,
+				const u8 *dst,
 				const u8 *src, const u8 *bssid,
 				const u8 *data, size_t data_len,
 				enum offchannel_send_action_result result)
@@ -254,18 +256,20 @@ static void gas_query_tx_status(struct wpa_supplicant *wpa_s,
 	int dur;
 
 	if (gas->current == NULL) {
-		wpa_printf(MSG_DEBUG, "GAS: Unexpected TX status: freq=%u dst="
-			   MACSTR " result=%d - no query in progress",
-			   freq, MAC2STR(dst), result);
+		wpa_printf(MSG_DEBUG, "GAS: Unexpected TX status: freq=%u"
+			   " freq_offset=%u dst=" MACSTR " result=%d"
+			   " - no query in progress",
+			   freq, freq_offset, MAC2STR(dst), result);
 		return;
 	}
 
 	query = gas->current;
 
 	dur = ms_from_time(&query->last_oper);
-	wpa_printf(MSG_DEBUG, "GAS: TX status: freq=%u dst=" MACSTR
+	wpa_printf(MSG_DEBUG, "GAS: TX status: freq=%u freq_offset=%u dst=" MACSTR
 		   " result=%d query=%p dialog_token=%u dur=%d ms",
-		   freq, MAC2STR(dst), result, query, query->dialog_token, dur);
+		   freq, freq_offset, MAC2STR(dst), result, query,
+		   query->dialog_token, dur);
 	if (!ether_addr_equal(dst, query->addr)) {
 		wpa_printf(MSG_DEBUG, "GAS: TX status for unexpected destination");
 		return;
@@ -328,7 +332,7 @@ static int gas_query_tx(struct gas_query *gas, struct gas_query_pending *query,
 	else
 		bssid = wildcard_bssid;
 
-	res = offchannel_send_action(gas->wpa_s, query->freq, query->addr,
+	res = offchannel_send_action(gas->wpa_s, query->freq, query->freq_offset, query->addr,
 				     query->sa, bssid, wpabuf_head(req),
 				     wpabuf_len(req), wait_time,
 				     gas_query_tx_status, 0);
@@ -868,7 +872,7 @@ static int gas_query_set_sa(struct gas_query *gas,
  * @ctx: Context pointer to use with the @cb call
  * Returns: dialog token (>= 0) on success or -1 on failure
  */
-int gas_query_req(struct gas_query *gas, const u8 *dst, int freq,
+int gas_query_req(struct gas_query *gas, const u8 *dst, int freq, int freq_offset,
 		  int wildcard_bssid, int maintain_addr, struct wpabuf *req,
 		  void (*cb)(void *ctx, const u8 *dst, u8 dialog_token,
 			     enum gas_query_result result,
@@ -900,6 +904,7 @@ int gas_query_req(struct gas_query *gas, const u8 *dst, int freq,
 	query->dialog_token = dialog_token;
 	query->wildcard_bssid = !!wildcard_bssid;
 	query->freq = freq;
+	query->freq_offset = freq_offset;
 	query->cb = cb;
 	query->ctx = ctx;
 	query->req = req;
@@ -911,7 +916,7 @@ int gas_query_req(struct gas_query *gas, const u8 *dst, int freq,
 		" dialog_token=%u freq=%d",
 		MAC2STR(query->addr), query->dialog_token, query->freq);
 
-	if (radio_add_work(gas->wpa_s, freq, "gas-query", 0, gas_query_start_cb,
+	if (radio_add_work(gas->wpa_s, freq, freq_offset, "gas-query", 0, gas_query_start_cb,
 			   query) < 0) {
 		query->req = NULL; /* caller will free this in error case */
 		gas_query_free(query, 1);

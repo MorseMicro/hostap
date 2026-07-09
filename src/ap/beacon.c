@@ -3,12 +3,14 @@
  * Copyright (c) 2002-2004, Instant802 Networks, Inc.
  * Copyright (c) 2005-2006, Devicescape Software, Inc.
  * Copyright (c) 2008-2012, Jouni Malinen <j@w1.fi>
+ * Copyright 2023 Morse Micro
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
  */
 
 #include "utils/includes.h"
+#include "utils/morse.h"
 
 #ifndef CONFIG_NATIVE_WINDOWS
 
@@ -586,6 +588,11 @@ ieee802_11_build_ap_params_mbssid(struct hostapd_data *hapd,
 	u8 elem_count = 0, *elem = NULL, **elem_offset = NULL, *end;
 	u8 rnr_elem_count = 0, *rnr_elem = NULL, **rnr_elem_offset = NULL;
 
+#ifdef CONFIG_IEEE80211AH
+	if (!iface->mbssid_max_interfaces)
+		iface->mbssid_max_interfaces = MBSSID_MAX_INTERFACES;
+#endif /* CONFIG_IEEE80211AH */
+
 	if (!iface->mbssid_max_interfaces ||
 	    iface->num_bss > iface->mbssid_max_interfaces ||
 	    (iface->conf->mbssid == ENHANCED_MBSSID_ENABLED &&
@@ -920,6 +927,11 @@ static u8 * hostapd_probe_resp_fill_elems(struct hostapd_data *hapd,
 
 	pos = hostapd_eid_rnr(hapd, pos, WLAN_FC_STYPE_PROBE_RESP, true);
 	pos = hostapd_eid_fils_indic(hapd, pos, 0);
+
+#ifdef CONFIG_IEEE80211AH
+	if (hapd->iconf->ieee80211ah && hapd->conf->max_away_duration)
+		pos = hostapd_eid_max_away_duration(hapd, pos);
+#endif
 
 	/* Max Channel Switch Time element */
 	pos = hostapd_eid_max_cs_time(hapd, pos);
@@ -1435,10 +1447,34 @@ static bool parse_ml_probe_req(const struct ieee80211_eht_ml *ml, size_t ml_len,
 }
 #endif /* CONFIG_IEEE80211BE */
 
+static bool ignore_probe_req_80211ah(struct hostapd_data *hapd, int freq)
+{
+#ifdef CONFIG_IEEE80211AH
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+	int chan = morse_ht_freq_to_s1g_chan(freq, hapd->iconf->op_country);
+	int bw = morse_s1g_chan_to_bw(chan);
+#else
+	int chan = -1; /* TODO */
+	int bw = -1; /* TODO */
+#endif
+	int prim_bw = (hapd->iconf->s1g_prim_chwidth == S1G_PRIM_CHWIDTH_1) ? 1 : 2;
+	int prim_chan = morse_s1g_get_primary_channel(hapd->iconf, (bw < prim_bw) ? bw : prim_bw);
+
+	/* For the AP to respond, the probe request must be received on the primary channel. */
+	if (chan != prim_chan) {
+		wpa_printf(MSG_DEBUG,
+			   "%s: Probe request not on primary: %d (%d MHz) != %d",
+			   __func__, chan, bw, prim_chan);
+
+		return true;
+	}
+#endif
+	return false;
+}
 
 void handle_probe_req(struct hostapd_data *hapd,
 		      const struct ieee80211_mgmt *mgmt, size_t len,
-		      int ssi_signal)
+		      int ssi_signal, int freq)
 {
 	struct ieee802_11_elems elems;
 	const u8 *ie;
@@ -1509,15 +1545,23 @@ void handle_probe_req(struct hostapd_data *hapd,
 	 * is less likely to see them (Probe Request frame sent on a
 	 * neighboring, but partially overlapping, channel).
 	 */
-	if (elems.ds_params &&
-	    hapd->iface->current_mode &&
-	    (hapd->iface->current_mode->mode == HOSTAPD_MODE_IEEE80211G ||
-	     hapd->iface->current_mode->mode == HOSTAPD_MODE_IEEE80211B) &&
-	    hapd->iconf->channel != elems.ds_params[0]) {
-		wpa_printf(MSG_DEBUG,
-			   "Ignore Probe Request due to DS Params mismatch: chan=%u != ds.chan=%u",
-			   hapd->iconf->channel, elems.ds_params[0]);
-		return;
+	if (hapd->iface->current_mode) {
+		enum hostapd_hw_mode mode = hapd->iface->current_mode->mode;
+
+		if (elems.ds_params &&
+		    (mode == HOSTAPD_MODE_IEEE80211G ||
+		     mode == HOSTAPD_MODE_IEEE80211B) &&
+		     hapd->iconf->channel != elems.ds_params[0]) {
+			wpa_printf(MSG_DEBUG,
+				   "Ignore Probe Request due to DS Params mismatch: chan=%u != ds.chan=%u",
+				   hapd->iconf->channel, elems.ds_params[0]);
+			return;
+		}
+
+		if (mode == HOSTAPD_MODE_IEEE80211A &&
+		    hapd->iface->conf->ieee80211ah &&
+		    ignore_probe_req_80211ah(hapd, freq))
+			return;
 	}
 
 #ifdef CONFIG_P2P
@@ -2763,6 +2807,7 @@ static int __ieee802_11_set_beacon(struct hostapd_data *hapd)
 
 	if (cmode &&
 	    hostapd_set_freq_params(&freq, iconf->hw_mode, iface->freq,
+				    iface->freq_offset,
 				    iconf->channel, iconf->enable_edmg,
 				    iconf->edmg_channel, iconf->ieee80211n,
 				    iconf->ieee80211ac, iconf->ieee80211ax,
