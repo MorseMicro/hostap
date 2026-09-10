@@ -991,6 +991,9 @@ static int rate_match(struct wpa_supplicant *wpa_s, struct wpa_ssid *ssid,
 	if (mode == NULL)
 		return 0;
 
+	if (mode->mode == HOSTAPD_MODE_IEEE80211AH)
+		return 1; /* 802.11ah does not use legacy rates. */
+
 	for (i = 0; i < (int) sizeof(scan_ie); i++) {
 		rate_ie = wpa_bss_get_ie(bss, scan_ie[i]);
 		if (rate_ie == NULL)

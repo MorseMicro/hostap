@@ -349,6 +349,11 @@ int wpa_supplicant_conf_ap_ht(struct wpa_supplicant *wpa_s,
 			ssid->he = 0;
 #endif /* CONFIG_HE_OVERRIDES */
 
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+		if (conf->hw_mode == HOSTAPD_MODE_IEEE80211A)
+			conf->ieee80211ah = 1;
+#endif /* CONFIG_MORSE_5GHZ_MAPPED */
+
 		if (!ssid->ht) {
 			wpa_printf(MSG_DEBUG,
 				   "HT not enabled in network profile");

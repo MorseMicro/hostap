@@ -20,7 +20,7 @@ struct wpa_supplicant;
 #define MORSE_INVALID_CHANNEL (-2)
 #define MORSE_SUCCESS (0)
 /** The maximum number of country codes that can be assigned to an S1G class */
-#define COUNTRY_CODE_MAX (3)
+#define COUNTRY_CODE_MAX (4)
 #define COUNTRY_CODE_LEN (2)
 #define S1G_CHAN_ENABLED_FLAG(ch) (1LLU << (ch))
 #define NUMBER_OF_BITS(x) (sizeof(x) * 8)
@@ -117,6 +117,10 @@ enum morse_dot11ah_region {
 	MORSE_NZ,
 	MORSE_SG,
 	MORSE_US,
+	MORSE_MX,
+	MORSE_AR,
+	MORSE_CL,
+	MORSE_CO,
 	REGION_UNSET = 0xFF,
 };
 

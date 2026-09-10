@@ -1502,6 +1502,13 @@ static int wpa_driver_nl80211_own_ifindex(struct i802_bss *bss,
 		if (wpa_driver_nl80211_finish_drv_init(bss, NULL, NULL,
 						       WPA_P2P_MODE_WFD_R1) < 0)
 			return -1;
+		/* Re-register the new ifindex so that handle_eapol() accepts
+		 * EAPOL frames received on the re-created interface.
+		 * finish_drv_init() updates drv->ifindex to the new value but
+		 * does not call add_ifidx(), leaving if_indices empty and
+		 * causing nl80211_has_ifidx() to reject all EAPOL RX.
+		 */
+		add_ifidx(drv, drv->ifindex, IFIDX_ANY);
 		return 1;
 	}
 
@@ -15469,8 +15476,6 @@ static int nl80211_set_s1g_channel(void *priv, int oper_freq,
 	wpa_printf(MSG_DEBUG, "  * Operating BW=%u MHz", resp->op_chan_bw_mhz);
 	wpa_printf(MSG_DEBUG, "  * Primary BW=%u MHz", resp->pri_chan_bw_mhz);
 	wpa_printf(MSG_DEBUG, "  * Primary Channel Index=%u", resp->pri_1mhz_chan_idx);
-
-	return ret;
 
 out:
 	wpabuf_free(reply);

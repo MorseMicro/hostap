@@ -39,6 +39,7 @@
 #endif
 #ifdef CONFIG_DPP3
 #define PUSH_BUTTON_CHIRP_FOREVER_START_DELAY_S (30)
+#define PUSH_BUTTON_RETRY_SCAN_DWELL_TU         (200)
 #endif
 
 static int wpas_dpp_listen_start(struct wpa_supplicant *wpa_s,
@@ -105,7 +106,7 @@ int wpas_dpp_qr_code(struct wpa_supplicant *wpa_s, const char *cmd)
 			" freq=%u freq_offset=%u type=%d",
 			MAC2STR(auth->peer_mac_addr), auth->curr_freq, auth->curr_freq_offset,
 			DPP_PA_AUTHENTICATION_RESP);
-		offchannel_send_action(wpa_s, auth->curr_freq, 0,
+		offchannel_send_action(wpa_s, auth->curr_freq, auth->curr_freq_offset,
 				       auth->peer_mac_addr, wpa_s->own_addr,
 				       broadcast,
 				       wpabuf_head(auth->resp_msg),
@@ -118,6 +119,25 @@ int wpas_dpp_qr_code(struct wpa_supplicant *wpa_s, const char *cmd)
 #endif /* CONFIG_DPP2 */
 
 	return bi->id;
+}
+
+
+int wpas_dpp_bootstrap_gen(struct wpa_supplicant *wpa_s, const char *cmd)
+{
+	return dpp_bootstrap_gen(wpa_s->dpp, cmd);
+}
+
+
+const char * wpas_dpp_bootstrap_get_uri(struct wpa_supplicant *wpa_s,
+					unsigned int id)
+{
+	return dpp_bootstrap_get_uri(wpa_s->dpp, id);
+}
+
+
+int wpas_dpp_bootstrap_remove(struct wpa_supplicant *wpa_s, const char *id)
+{
+	return dpp_bootstrap_remove(wpa_s->dpp, id);
 }
 
 
@@ -220,8 +240,8 @@ static void wpas_dpp_auth_resp_retry_timeout(void *eloop_ctx, void *timeout_ctx)
 		" freq=%u freq_offset=%u type=%d",
 		MAC2STR(auth->peer_mac_addr), auth->curr_freq, auth->curr_freq_offset,
 		DPP_PA_AUTHENTICATION_RESP);
-	offchannel_send_action(wpa_s, auth->curr_freq, 0, auth->peer_mac_addr,
-			       wpa_s->own_addr, broadcast,
+	offchannel_send_action(wpa_s, auth->curr_freq, auth->curr_freq_offset,
+			       auth->peer_mac_addr, wpa_s->own_addr, broadcast,
 			       wpabuf_head(auth->resp_msg),
 			       wpabuf_len(auth->resp_msg),
 			       500, wpas_dpp_tx_status, 0);
@@ -452,7 +472,7 @@ void wpas_dpp_send_conn_status_result(struct wpa_supplicant *wpa_s,
 		DPP_EVENT_TX "dst=" MACSTR " freq=%u freq_offset=%u  type=%d",
 		MAC2STR(auth->peer_mac_addr), auth->curr_freq, auth->curr_freq_offset,
 		DPP_PA_CONNECTION_STATUS_RESULT);
-	offchannel_send_action(wpa_s, auth->curr_freq, 0,
+	offchannel_send_action(wpa_s, auth->curr_freq, auth->curr_freq_offset,
 			       auth->peer_mac_addr, wpa_s->own_addr, broadcast,
 			       wpabuf_head(msg), wpabuf_len(msg),
 			       500, wpas_dpp_tx_status, 0);
@@ -558,6 +578,11 @@ static void wpas_dpp_tx_status(struct wpa_supplicant *wpa_s,
 		return;
 	}
 
+	if (auth->conf_result_pending_tx) {
+		auth->conf_result_pending_tx = 0;
+		MORSE_DPP_EVT_CALL_NOARGS(MORSE_DPP_EVT_CONF_RESULT_TX);
+	}
+
 #ifdef CONFIG_DPP2
 	if (auth->connect_on_tx_status) {
 		auth->connect_on_tx_status = 0;
@@ -625,6 +650,10 @@ static void wpas_dpp_tx_status(struct wpa_supplicant *wpa_s,
 		}
 	}
 
+	if (auth->waiting_auth_conf) {
+		MORSE_DPP_EVT_CALL_NOARGS(MORSE_DPP_EVT_AUTH_RESP_TX);
+	}
+
 	if (auth->waiting_auth_conf &&
 	    auth->auth_resp_status == DPP_STATUS_OK) {
 		/* Make sure we do not get stuck waiting for Auth Confirm
@@ -686,6 +715,8 @@ static void wpas_dpp_reply_wait_timeout(void *eloop_ctx, void *timeout_ctx)
 		wpa_printf(MSG_INFO,
 			   "DPP: No response received from responder - stopping initiation attempt");
 		wpa_msg(wpa_s, MSG_INFO, DPP_EVENT_AUTH_INIT_FAILED);
+		MORSE_DPP_EVT_CALL(MORSE_DPP_EVT_AUTH_FAILURE, auth_failure,
+				   .reason = MORSE_DPP_AUTH_FAILURE_NO_RESPONSE);
 		offchannel_send_action_done(wpa_s);
 		wpas_dpp_listen_stop(wpa_s);
 		dpp_auth_deinit(auth);
@@ -740,6 +771,8 @@ static void wpas_dpp_auth_conf_wait_timeout(void *eloop_ctx, void *timeout_ctx)
 	wpa_printf(MSG_DEBUG,
 		   "DPP: Terminate authentication exchange due to Auth Confirm timeout");
 	wpa_msg(wpa_s, MSG_INFO, DPP_EVENT_FAIL "No Auth Confirm received");
+	MORSE_DPP_EVT_CALL(MORSE_DPP_EVT_AUTH_FAILURE, auth_failure,
+			   .reason = MORSE_DPP_AUTH_FAILURE_NO_CONFIRM);
 	offchannel_send_action_done(wpa_s);
 	dpp_auth_deinit(auth);
 	wpa_s->dpp_auth = NULL;
@@ -802,6 +835,8 @@ static int wpas_dpp_auth_init_next(struct wpa_supplicant *wpa_s)
 			wpa_printf(MSG_INFO,
 				   "DPP: No response received from responder - stopping initiation attempt");
 			wpa_msg(wpa_s, MSG_INFO, DPP_EVENT_AUTH_INIT_FAILED);
+			MORSE_DPP_EVT_CALL(MORSE_DPP_EVT_AUTH_FAILURE, auth_failure,
+					   .reason = MORSE_DPP_AUTH_FAILURE_INIT_FAILED);
 			eloop_cancel_timeout(wpas_dpp_reply_wait_timeout,
 					     wpa_s, NULL);
 			offchannel_send_action_done(wpa_s);
@@ -1087,6 +1122,7 @@ static void dpp_start_listen_cb(struct wpa_radio_work *work, int deinit)
 	}
 	wpa_s->off_channel_freq = 0;
 	wpa_s->roc_waiting_drv_freq = lwork->freq;
+	wpa_s->roc_waiting_drv_freq_offset = lwork->freq_offset;
 	wpa_drv_dpp_listen(wpa_s, true);
 	wpa_s->dpp_tx_auth_resp_on_roc_stop = false;
 	wpa_s->dpp_tx_chan_change = false;
@@ -1203,7 +1239,7 @@ static void wpas_dpp_tx_auth_resp(struct wpa_supplicant *wpa_s)
 	wpa_msg(wpa_s, MSG_INFO, DPP_EVENT_TX "dst=" MACSTR " freq=%u freq_offset=%u type=%d",
 		MAC2STR(auth->peer_mac_addr), auth->curr_freq, auth->curr_freq_offset,
 		DPP_PA_AUTHENTICATION_RESP);
-	offchannel_send_action(wpa_s, auth->curr_freq, 0,
+	offchannel_send_action(wpa_s, auth->curr_freq, auth->curr_freq_offset,
 			       auth->peer_mac_addr, wpa_s->own_addr, broadcast,
 			       wpabuf_head(auth->resp_msg),
 			       wpabuf_len(auth->resp_msg),
@@ -1376,6 +1412,8 @@ static void wpas_dpp_rx_auth_req(struct wpa_supplicant *wpa_s, const u8 *src,
 	wpa_s->dpp_tx_auth_resp_on_roc_stop = false;
 	wpa_s->dpp_tx_chan_change = false;
 
+	MORSE_DPP_EVT_CALL(MORSE_DPP_EVT_AUTH_REQ_RX, auth_req_rx,
+			   .peer_mac = src);
 	wpas_dpp_tx_auth_resp(wpa_s);
 }
 
@@ -1390,6 +1428,7 @@ void wpas_dpp_tx_wait_expire(struct wpa_supplicant *wpa_s)
 	if (wpa_s->dpp_pb_announcement && wpa_s->dpp_pb_discovery_done) {
 		wpa_printf(MSG_DEBUG,
 			   "DPP: Failed to send push button announcement");
+		eloop_cancel_timeout(wpas_dpp_pb_next, wpa_s, NULL);
 		if (eloop_register_timeout(0, 0, wpas_dpp_pb_next,
 					   wpa_s, NULL) < 0)
 			wpas_dpp_push_button_stop(wpa_s);
@@ -1877,12 +1916,13 @@ static int wpas_dpp_handle_config_obj(struct wpa_supplicant *wpa_s,
 	if (!wpa_s->dpp_pb_result_indicated) {
 		wpa_msg(wpa_s, MSG_INFO, DPP_EVENT_PB_RESULT "success");
 		MORSE_DPP_EVT_CALL(MORSE_DPP_EVT_PB_RESULT, pb_result,
-				   .result = MORSE_DPP_PB_RESULT_SUCCESS,
-				   .conf_obj = conf);
+				   .result = MORSE_DPP_PB_RESULT_SUCCESS);
 		wpa_s->dpp_pb_result_indicated = true;
 	}
-
 #endif /* CONFIG_DPP3 */
+
+	MORSE_DPP_EVT_CALL(MORSE_DPP_EVT_CONF_RECEIVED, conf_received,
+			   .conf_obj = conf);
 
 	return wpas_dpp_process_config(wpa_s, auth, conf);
 }
@@ -2049,8 +2089,11 @@ static void wpas_dpp_gas_resp_cb(void *ctx, const u8 *addr, u8 dialog_token,
 	}
 #endif /* CONFIG_TESTING_OPTIONS */
 fail:
-	if (status != DPP_STATUS_OK)
+	if (status != DPP_STATUS_OK) {
 		wpa_msg(wpa_s, MSG_INFO, DPP_EVENT_CONF_FAILED);
+		MORSE_DPP_EVT_CALL(MORSE_DPP_EVT_CONF_FAILED, conf_failed,
+				   .reason = MORSE_DPP_CONF_FAILURE_RESPONSE_ERROR);
+	}
 #ifdef CONFIG_DPP2
 	if (auth->peer_version >= 2 &&
 	    auth->conf_resp_status == DPP_STATUS_OK) {
@@ -2065,12 +2108,13 @@ fail:
 			DPP_EVENT_TX "dst=" MACSTR " freq=%u freq_offset=%u  type=%d",
 			MAC2STR(addr), auth->curr_freq, auth->curr_freq_offset,
 			DPP_PA_CONFIGURATION_RESULT);
-		offchannel_send_action(wpa_s, auth->curr_freq, 0,
+		offchannel_send_action(wpa_s, auth->curr_freq, auth->curr_freq_offset,
 				       addr, wpa_s->own_addr, broadcast,
 				       wpabuf_head(msg),
 				       wpabuf_len(msg),
 				       500, wpas_dpp_tx_status, 0);
 		wpabuf_free(msg);
+		auth->conf_result_pending_tx = 1;
 
 		/* This exchange will be terminated in the TX status handler */
 		if (wpa_s->conf->dpp_config_processing < 2 ||
@@ -2096,6 +2140,8 @@ static void wpas_dpp_gas_client_timeout(void *eloop_ctx, void *timeout_ctx)
 
 	wpa_printf(MSG_DEBUG, "DPP: Timeout while waiting for Config Response");
 	wpa_msg(wpa_s, MSG_INFO, DPP_EVENT_CONF_FAILED);
+	MORSE_DPP_EVT_CALL(MORSE_DPP_EVT_CONF_FAILED, conf_failed,
+			   .reason = MORSE_DPP_CONF_FAILURE_TIMEOUT);
 	dpp_auth_deinit(wpa_s->dpp_auth);
 	wpa_s->dpp_auth = NULL;
 }
@@ -2154,6 +2200,7 @@ static void wpas_dpp_start_gas_client(struct wpa_supplicant *wpa_s)
 		wpa_printf(MSG_DEBUG,
 			   "DPP: GAS query started with dialog token %u", res);
 		wpa_s->dpp_gas_dialog_token = res;
+		MORSE_DPP_EVT_CALL_NOARGS(MORSE_DPP_EVT_CONF_REQ_TX);
 	}
 }
 
@@ -2162,6 +2209,8 @@ static void wpas_dpp_auth_success(struct wpa_supplicant *wpa_s, int initiator)
 {
 	wpa_printf(MSG_DEBUG, "DPP: Authentication succeeded");
 	dpp_notify_auth_success(wpa_s->dpp_auth, initiator);
+	MORSE_DPP_EVT_CALL(MORSE_DPP_EVT_AUTH_SUCCESS, auth_success,
+			   .initiator = initiator);
 #ifdef CONFIG_TESTING_OPTIONS
 	if (dpp_test == DPP_TEST_STOP_AT_AUTH_CONF) {
 		wpa_printf(MSG_INFO,
@@ -2287,6 +2336,8 @@ static void wpas_dpp_config_result_wait_timeout(void *eloop_ctx,
 	wpa_printf(MSG_DEBUG,
 		   "DPP: Timeout while waiting for Configuration Result");
 	wpa_msg(wpa_s, MSG_INFO, DPP_EVENT_CONF_FAILED);
+	MORSE_DPP_EVT_CALL(MORSE_DPP_EVT_CONF_FAILED, conf_failed,
+			   .reason = MORSE_DPP_CONF_FAILURE_RESULT_TIMEOUT);
 	dpp_auth_deinit(auth);
 	wpa_s->dpp_auth = NULL;
 }
@@ -2422,14 +2473,12 @@ static void wpas_dpp_rx_conf_result(struct wpa_supplicant *wpa_s, const u8 *src,
 			wpa_msg(wpa_s, MSG_INFO, DPP_EVENT_PB_RESULT
 				"success");
 			MORSE_DPP_EVT_CALL(MORSE_DPP_EVT_PB_RESULT, pb_result,
-					   .result = MORSE_DPP_PB_RESULT_SUCCESS,
-					   .conf_obj = NULL);
+					   .result = MORSE_DPP_PB_RESULT_SUCCESS);
 		} else {
 			wpa_msg(wpa_s, MSG_INFO, DPP_EVENT_PB_RESULT
 				"no-configuration-available");
 			MORSE_DPP_EVT_CALL(MORSE_DPP_EVT_PB_RESULT, pb_result,
-					   .result = MORSE_DPP_PB_RESULT_NO_CONFIG,
-					   .conf_obj = NULL);
+					   .result = MORSE_DPP_PB_RESULT_NO_CONFIG);
 		}
 		wpa_s->dpp_pb_result_indicated = true;
 		if (status == DPP_STATUS_OK)
@@ -2499,6 +2548,11 @@ static bool wpas_dpp_tcp_msg_sent(void *ctx, struct dpp_authentication *auth)
 	struct wpa_supplicant *wpa_s = ctx;
 
 	wpa_printf(MSG_DEBUG, "DPP: TCP message sent callback");
+
+	if (auth->conf_result_pending_tx) {
+		auth->conf_result_pending_tx = 0;
+		MORSE_DPP_EVT_CALL_NOARGS(MORSE_DPP_EVT_CONF_RESULT_TX);
+	}
 
 	if (auth->connect_on_tx_status) {
 		auth->connect_on_tx_status = 0;
@@ -3790,7 +3844,7 @@ wpas_dpp_rx_pb_presence_announcement(struct wpa_supplicant *wpa_s,
 					DPP_EVENT_PB_RESULT "session-overlap");
 				MORSE_DPP_EVT_CALL(MORSE_DPP_EVT_PB_RESULT, pb_result,
 						   .result = MORSE_DPP_PB_RESULT_SESSION_OVERLAP,
-						   .conf_obj = NULL);
+	);
 				wpa_s->dpp_pb_result_indicated = true;
 			}
 			wpas_dpp_push_button_stop(wpa_s);
@@ -3946,8 +4000,7 @@ skip_hash_check:
 			wpa_msg(wpa_s, MSG_INFO, DPP_EVENT_PB_RESULT
 				"session-overlap");
 			MORSE_DPP_EVT_CALL(MORSE_DPP_EVT_PB_RESULT, pb_result,
-					   .result = MORSE_DPP_PB_RESULT_SESSION_OVERLAP,
-					   .conf_obj = NULL);
+					   .result = MORSE_DPP_PB_RESULT_SESSION_OVERLAP);
 			wpa_s->dpp_pb_result_indicated = true;
 		}
 		wpas_dpp_push_button_stop(wpa_s);
@@ -3958,6 +4011,8 @@ skip_hash_check:
 		wpa_msg(wpa_s, MSG_INFO, DPP_EVENT_PB_STATUS
 			"discovered push button AP/Configurator " MACSTR,
 			MAC2STR(src));
+		MORSE_DPP_EVT_CALL(MORSE_DPP_EVT_PB_DISCOVERY, pb_discovery,
+				   .peer_mac = src);
 		wpa_s->dpp_pb_resp_freq = freq;
 		wpa_s->dpp_pb_resp_freq_offset = freq_offset;
 		os_memcpy(wpa_s->dpp_pb_init_hash, i_hash, SHA256_MAC_LEN);
@@ -4590,14 +4645,12 @@ wpas_dpp_gas_status_handler(void *ctx, struct wpabuf *resp, int ok)
 			wpa_msg(wpa_s, MSG_INFO, DPP_EVENT_PB_RESULT
 				"success");
 			MORSE_DPP_EVT_CALL(MORSE_DPP_EVT_PB_RESULT, pb_result,
-					   .result = MORSE_DPP_PB_RESULT_SUCCESS,
-					   .conf_obj = NULL);
+					   .result = MORSE_DPP_PB_RESULT_SUCCESS);
 		} else {
 			wpa_msg(wpa_s, MSG_INFO, DPP_EVENT_PB_RESULT
 				"could-not-connect");
 			MORSE_DPP_EVT_CALL(MORSE_DPP_EVT_PB_RESULT, pb_result,
-					   .result = MORSE_DPP_PB_RESULT_COULD_NOT_CONNECT,
-					   .conf_obj = NULL);
+					   .result = MORSE_DPP_PB_RESULT_COULD_NOT_CONNECT);
 		}
 		wpa_s->dpp_pb_result_indicated = true;
 		if (ok)
@@ -5671,7 +5724,10 @@ int wpas_dpp_chirp(struct wpa_supplicant *wpa_s, const char *cmd)
 	wpa_s->dpp_chirp_scan_done = 0;
 	wpa_s->dpp_chirp_listen = listen_freq;
 
-	return eloop_register_timeout(0, 0, wpas_dpp_chirp_next, wpa_s, NULL);
+	if (eloop_register_timeout(0, 0, wpas_dpp_chirp_next, wpa_s, NULL) < 0)
+		return -1;
+	MORSE_DPP_EVT_CALL_NOARGS(MORSE_DPP_EVT_CHIRP_STARTED);
+	return 0;
 }
 
 
@@ -5681,6 +5737,7 @@ void wpas_dpp_chirp_stop(struct wpa_supplicant *wpa_s)
 	    wpa_s->dpp_reconfig_ssid) {
 		offchannel_send_action_done(wpa_s);
 		wpa_msg(wpa_s, MSG_INFO, DPP_EVENT_CHIRP_STOPPED);
+		MORSE_DPP_EVT_CALL_NOARGS(MORSE_DPP_EVT_CHIRP_STOPPED);
 	}
 	wpa_s->dpp_chirp_bi = NULL;
 	wpabuf_free(wpa_s->dpp_presence_announcement);
@@ -6098,6 +6155,7 @@ static void wpas_dpp_pb_scan_res_handler(struct wpa_supplicant *wpa_s,
 	if (wpa_s->dpp_pb_scan_retries < 2) {
 		wpa_s->scan_req = MANUAL_SCAN_REQ;
 		wpa_s->scan_res_handler = wpas_dpp_pb_scan_res_handler;
+		wpa_s->next_scan_dwell_duration = PUSH_BUTTON_RETRY_SCAN_DWELL_TU;
 		wpa_supplicant_cancel_sched_scan(wpa_s);
 		wpa_supplicant_req_scan(wpa_s, 0, 500000);
 		return;
@@ -6168,6 +6226,7 @@ int wpas_dpp_push_button(struct wpa_supplicant *wpa_s, const char *cmd)
 	wpa_supplicant_cancel_sched_scan(wpa_s);
 	wpa_supplicant_req_scan(wpa_s, 0, 0);
 	wpa_msg(wpa_s, MSG_INFO, DPP_EVENT_PB_STATUS "started");
+	MORSE_DPP_EVT_CALL_NOARGS(MORSE_DPP_EVT_PB_STARTED);
 
 	res = 0;
 out:
@@ -6200,8 +6259,7 @@ void wpas_dpp_push_button_stop(struct wpa_supplicant *wpa_s)
 		if (!wpa_s->dpp_pb_result_indicated) {
 			wpa_msg(wpa_s, MSG_INFO, DPP_EVENT_PB_RESULT "failed");
 			MORSE_DPP_EVT_CALL(MORSE_DPP_EVT_PB_RESULT, pb_result,
-					   .result = MORSE_DPP_PB_RESULT_FAILED,
-					   .conf_obj = NULL);
+					   .result = MORSE_DPP_PB_RESULT_FAILED);
 			wpa_s->dpp_pb_result_indicated = true;
 		}
 	}
@@ -6221,8 +6279,7 @@ void wpas_dpp_push_button_stop(struct wpa_supplicant *wpa_s)
 		if (!wpa_s->dpp_pb_result_indicated) {
 			wpa_msg(wpa_s, MSG_INFO, DPP_EVENT_PB_RESULT "failed");
 			MORSE_DPP_EVT_CALL(MORSE_DPP_EVT_PB_RESULT, pb_result,
-					   .result = MORSE_DPP_PB_RESULT_FAILED,
-					   .conf_obj = NULL);
+					   .result = MORSE_DPP_PB_RESULT_FAILED);
 		}
 	}
 	wpa_s->dpp_pb_time.sec = 0;

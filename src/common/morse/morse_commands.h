@@ -21,7 +21,7 @@
 #endif
 
 #define MORSE_CMD_SEMVER_MAJOR 57
-#define MORSE_CMD_SEMVER_MINOR 0
+#define MORSE_CMD_SEMVER_MINOR 11
 #define MORSE_CMD_SEMVER_PATCH 0
 
 #define MORSE_CMD_TYPE_REQ  BIT(0)
@@ -296,7 +296,7 @@ enum morse_cmd_standby_mode {
  * @MORSE_CMD_STANDBY_MODE_EXIT_REASON_NONE: No specific reason for exiting standby mode
  * @MORSE_CMD_STANDBY_MODE_EXIT_REASON_WAKEUP_FRAME: The STA has received the wakeup frame
  * @MORSE_CMD_STANDBY_MODE_EXIT_REASON_ASSOCIATE: The STA needs to (re)associate
- * @MORSE_CMD_STANDBY_MODE_EXIT_REASON_EXT_INPUT: The STA's external input pin has fired
+ * @MORSE_CMD_STANDBY_MODE_EXIT_REASON_EXT_INPUT: The STA has received an external input
  * @MORSE_CMD_STANDBY_MODE_EXIT_REASON_WHITELIST_PKT: Whitelisted packet received
  * @MORSE_CMD_STANDBY_MODE_EXIT_REASON_TCP_CONNECTION_LOST: TCP connection lost
  * @MORSE_CMD_STANDBY_MODE_EXIT_REASON_HW_SCAN_NOT_ENABLED: HW scan is not enabled
@@ -310,7 +310,7 @@ enum morse_cmd_standby_mode_exit_reason {
 	MORSE_CMD_STANDBY_MODE_EXIT_REASON_WAKEUP_FRAME = 1,
 	/** The STA needs to (re)associate */
 	MORSE_CMD_STANDBY_MODE_EXIT_REASON_ASSOCIATE = 2,
-	/** The STA's external input pin has fired */
+	/** The STA has received an external input */
 	MORSE_CMD_STANDBY_MODE_EXIT_REASON_EXT_INPUT = 3,
 	/** Whitelisted packet received */
 	MORSE_CMD_STANDBY_MODE_EXIT_REASON_WHITELIST_PKT = 4,
@@ -403,10 +403,13 @@ struct morse_cmd_standby_set_wake_filter {
  * Standby mode exit response structure
  * @reason: Reason for exiting Standby mode, see @ref morse_cmd_standby_mode_exit_reason
  * @sta_state: Current connection state
+ * @gpio_num: When the reason is EXT_INPUT, this field is set to the GPIO number of the GPIO that
+ *            received the external input.
  */
 struct morse_cmd_standby_mode_exit {
 	u8 reason;
 	u8 sta_state;
+	u8 gpio_num;
 } __attribute__((packed));
 
 /**
@@ -816,6 +819,10 @@ enum morse_cmd_slow_clock_mode {
 /**
  * enum morse_cmd_param_id - Subcommand IDs for generic get / set command
  * @MORSE_CMD_PARAM_ID_AUTOCONNECT: Automatically reconnect if connection is lost (FullMAC only).
+ * @MORSE_CMD_PARAM_ID_SCAN_INTERVAL_BASE_S: Base interval between scans when reconnecting (FullMAC
+ *                                           only).
+ * @MORSE_CMD_PARAM_ID_SCAN_INTERVAL_LIMIT_S: Maximum interval between scans when reconnecting
+ *                                            (FullMAC only).
  */
 enum morse_cmd_param_id {
 	MORSE_CMD_PARAM_ID_MAX_TRAFFIC_DELIVERY_WAIT_US	  = 0,
@@ -850,10 +857,15 @@ enum morse_cmd_param_id {
 	MORSE_CMD_PARAM_ID_CHANNELIZATION		  = 29,
 	MORSE_CMD_PARAM_ID_CRYPTO_IN_HOST		  = 30,
 	/** Automatically reconnect if connection is lost (FullMAC only). */
-	MORSE_CMD_PARAM_ID_AUTOCONNECT		      = 31,
-	MORSE_CMD_PARAM_ID_HOST_PWR_OFF_GPIO	      = 32,
-	MORSE_CMD_PARAM_ID_HOST_PWR_OFF_GPIO_PULSE_MS = 33,
-	MORSE_CMD_PARAM_ID_LAST			      = 34,
+	MORSE_CMD_PARAM_ID_AUTOCONNECT		       = 31,
+	MORSE_CMD_PARAM_ID_HOST_PWR_OFF_GPIO	       = 32,
+	MORSE_CMD_PARAM_ID_HOST_PWR_OFF_GPIO_PULSE_MS  = 33,
+	MORSE_CMD_PARAM_ID_ALLOW_PRE_ASSOC_OFF_CHAN_PS = 34,
+	/** Base interval between scans when reconnecting (FullMAC only). */
+	MORSE_CMD_PARAM_ID_SCAN_INTERVAL_BASE_S = 35,
+	/** Maximum interval between scans when reconnecting (FullMAC only). */
+	MORSE_CMD_PARAM_ID_SCAN_INTERVAL_LIMIT_S = 36,
+	MORSE_CMD_PARAM_ID_LAST			 = 37,
 };
 
 /**

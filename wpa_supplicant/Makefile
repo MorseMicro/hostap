@@ -80,7 +80,7 @@ endif
 endif
 
 # This line used by packaging scripts - do not change
-MORSE_VERSION ?= rel_mm6108_2_0_1_2026_Jun_11
+MORSE_VERSION ?= rel_mm6108_2_1_1_2026_Jul_29
 ifdef MORSE_VERSION
 CFLAGS += -DMORSE_VERSION_STR=\"$(MORSE_VERSION)\"
 endif
@@ -106,7 +106,7 @@ $(DESTDIR)$(BINDIR)/%: %
 install: $(addprefix $(DESTDIR)$(BINDIR)/,$(BINALL))
 	$(MAKE) -C ../src install
 ifndef CONFIG_NO_WPA_PASSPHRASE
-	install -D wpa_passphrase $(DESTDIR)/$(BINDIR)/wpa_passphrase
+	install -D wpa_passphrase_s1g $(DESTDIR)/$(BINDIR)/wpa_passphrase_s1g
 endif
 
 ifdef CONFIG_BUILD_PASN_SO
