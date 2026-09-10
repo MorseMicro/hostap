@@ -21,7 +21,7 @@
 #endif
 
 #define MORSE_CMD_SEMVER_MAJOR 57
-#define MORSE_CMD_SEMVER_MINOR 11
+#define MORSE_CMD_SEMVER_MINOR 13
 #define MORSE_CMD_SEMVER_PATCH 0
 
 #define MORSE_CMD_TYPE_REQ  BIT(0)
@@ -301,6 +301,7 @@ enum morse_cmd_standby_mode {
  * @MORSE_CMD_STANDBY_MODE_EXIT_REASON_TCP_CONNECTION_LOST: TCP connection lost
  * @MORSE_CMD_STANDBY_MODE_EXIT_REASON_HW_SCAN_NOT_ENABLED: HW scan is not enabled
  * @MORSE_CMD_STANDBY_MODE_EXIT_REASON_HW_SCAN_FAILED_TO_START: HW scan failed to start
+ * @MORSE_CMD_STANDBY_MODE_EXIT_REASON_SERVER_CONNECTION_LOST: Connection to a server was lost
  * @MORSE_CMD_STANDBY_MODE_EXIT_REASON_MAX: Max exit reason enum value
  */
 enum morse_cmd_standby_mode_exit_reason {
@@ -320,9 +321,11 @@ enum morse_cmd_standby_mode_exit_reason {
 	MORSE_CMD_STANDBY_MODE_EXIT_REASON_HW_SCAN_NOT_ENABLED = 6,
 	/** HW scan failed to start */
 	MORSE_CMD_STANDBY_MODE_EXIT_REASON_HW_SCAN_FAILED_TO_START = 7,
+	/** Connection to a server was lost */
+	MORSE_CMD_STANDBY_MODE_EXIT_REASON_SERVER_CONNECTION_LOST = 8,
 	/** Max exit reason enum value */
 	MORSE_CMD_STANDBY_MODE_EXIT_REASON_MAX =
-		MORSE_CMD_STANDBY_MODE_EXIT_REASON_HW_SCAN_FAILED_TO_START,
+		MORSE_CMD_STANDBY_MODE_EXIT_REASON_SERVER_CONNECTION_LOST + 1,
 };
 
 /**
