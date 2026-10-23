@@ -6317,6 +6317,28 @@ static void handle_assoc(struct hostapd_data *hapd,
 		left = res;
 	}
 #endif /* CONFIG_FILS */
+#ifdef CONFIG_IEEE80211AH
+	if (morse_s1g_op_class_requires_morse_vendor_ie(hapd->iconf->s1g_op_class)) {
+		const u8 *morse_vendor_ie;
+
+		morse_vendor_ie = get_vendor_ie(pos, left,
+						 MORSE_VENDOR_IE_CAPS_OPS_VENDOR_TYPE);
+
+		wpa_printf(MSG_DEBUG,
+			   "Morse vendor IE check: country=%.2s freq=%d op_class=%u vendor_ie=%s",
+			   hapd->iconf->op_country, hapd->iface->freq,
+			   hapd->iconf->s1g_op_class, morse_vendor_ie ? "present" : "missing");
+
+		if (!morse_vendor_ie) {
+			hostapd_logger(hapd, mgmt->sa, HOSTAPD_MODULE_IEEE80211,
+				       HOSTAPD_LEVEL_WARNING,
+				       "Reject association without Morse vendor IE for proprietary S1G operating class %u",
+				       hapd->iconf->s1g_op_class);
+			resp = WLAN_STATUS_ASSOC_DENIED_UNSPEC;
+			goto fail;
+		}
+	}
+#endif /* CONFIG_IEEE80211AH */
 
 	/* followed by SSID and Supported rates; and HT capabilities if 802.11n
 	 * is used */
@@ -6828,6 +6850,24 @@ static int handle_action(struct hostapd_data *hapd,
 		sta->last_seq_ctrl = seq_ctrl;
 		sta->last_subtype = WLAN_FC_STYPE_ACTION;
 	}
+
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+#ifdef CONFIG_IEEE80211AH
+	/* Under the 5G/S1G mapping hostapd tracks its operating channel as the
+	 * 1 MHz primary-index frequency, even when the width of the actual S1G primary channel
+	 * is 2MHz. Replying to action frames on the received frequency can trigger
+	 * a needless off-channel TX, narrowing the radio to the primary width and dropping
+	 * frames on the wider operating channel. Normalise such receptions to the 5G operating
+	 * channel frequency so responses stay on-channel (e.g. for DPP/GAS).
+	 */
+	if (hapd->iconf->ieee80211ah && (int) freq != hapd->iface->freq) {
+		int prim_ht_freq = morse_s1g_conf_get_prim_ht_freq(hapd->iconf);
+
+		if (prim_ht_freq > 0 && freq == (unsigned int) prim_ht_freq)
+			freq = hapd->iface->freq;
+	}
+#endif /* CONFIG_IEEE80211AH */
+#endif /* CONFIG_MORSE_5GHZ_MAPPED */
 
 	switch (mgmt->u.action.category) {
 #ifdef CONFIG_IEEE80211R_AP
@@ -7357,6 +7397,14 @@ static void handle_assoc_cb(struct hostapd_data *hapd,
 		status = le_to_host16(mgmt->u.assoc_resp.status_code);
 
 	if (!ok) {
+		if (sta->flags & WLAN_STA_ASSOC) {
+			wpa_printf(MSG_DEBUG,
+					"Ignore stale assoc resp TX status (ack=0) for "
+					"already associated STA " MACSTR,
+					MAC2STR(sta->addr));
+			goto handle_ml;
+		}
+
 		hostapd_logger(hapd, mgmt->da, HOSTAPD_MODULE_IEEE80211,
 			       HOSTAPD_LEVEL_DEBUG,
 			       "did not acknowledge association response");

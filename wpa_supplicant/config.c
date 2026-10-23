@@ -2904,9 +2904,9 @@ static const struct parse_data ssid_fields[] = {
 #ifdef CONFIG_IEEE80211AH
 	{ INT_RANGE(raw_sta_priority, 0, 7) },
 	{ INT_RANGE(cac, 0, 1) },
-	{ INT_RANGE(channel, 0, 60) },
+	{ INT_RANGE(channel, 0, 96) },
 	{ STR(country) },
-	{ INT_RANGE(op_class, 0, 80) },
+	{ INT_RANGE(op_class, 0, 196) },
 	{ INT_RANGE(s1g_prim_chwidth, 0, 2) },
 	{ INT_RANGE(s1g_prim_1mhz_chan_index, 0, 8) },
 	{ INT_RANGE(disable_s1g_sgi, 0, 1) },

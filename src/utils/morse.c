@@ -25,9 +25,6 @@
 #endif
 
 #define S1G_CHAN_SEP_KHZ (500)
-#define S1G_CHAN_COUNT (60)
-#define S1G_CHAN_MIN (1L)
-#define S1G_CHAN_MAX (S1G_CHAN_COUNT - 1L)
 
 #define PRIM_CHAN_INDEX_MIN (0)
 
@@ -37,6 +34,11 @@ struct s1g_ht_chan_pair {
 	int ht_channel;
 	int bw;
 };
+
+/* Compile-time check to ensure s1g_ht_chan_pairs_* covers every S1G channel */
+#define S1G_CHAN_PAIRS_ASSERT_SIZE(arr) \
+	static const char arr##_must_have_S1G_CHAN_COUNT_entries \
+		[(ARRAY_SIZE(arr) == S1G_CHAN_COUNT) ? 1 : -1] __maybe_unused
 
 static const int vht80_chans[] = {
 	24, 32, 42, 58, 106, 122, 155, 171
@@ -137,7 +139,45 @@ static const struct s1g_ht_chan_pair s1g_ht_chan_pairs_default[] = {
 	{57, -1, -1},	/* unmapped */
 	{58, -1, -1},	/* unmapped */
 	{59, -1, -1},	/* unmapped */
+	{60, -1, -1},	/* unmapped */
+	{61, -1, -1},	/* unmapped */
+	{62, -1, -1},	/* unmapped */
+	{63, -1, -1},	/* unmapped */
+	{64, -1, -1},	/* unmapped */
+	{65, -1, -1},	/* unmapped */
+	{66, -1, -1},	/* unmapped */
+	{67, -1, -1},	/* unmapped */
+	{68, -1, -1},	/* unmapped */
+	{69, -1, -1},	/* unmapped */
+	{70, -1, -1},	/* unmapped */
+	{71, -1, -1},	/* unmapped */
+	{72, -1, -1},	/* unmapped */
+	{73, -1, -1},	/* unmapped */
+	{74, -1, -1},	/* unmapped */
+	{75, -1, -1},	/* unmapped */
+	{76, -1, -1},	/* unmapped */
+	{77, -1, -1},	/* unmapped */
+	{78, -1, -1},	/* unmapped */
+	{79, -1, -1},	/* unmapped */
+	{80, -1, -1},	/* unmapped */
+	{81, -1, -1},	/* unmapped */
+	{82, -1, -1},	/* unmapped */
+	{83, -1, -1},	/* unmapped */
+	{84, -1, -1},	/* unmapped */
+	{85, -1, -1},	/* unmapped */
+	{86, -1, -1},	/* unmapped */
+	{87, -1, -1},	/* unmapped */
+	{88, -1, -1},	/* unmapped */
+	{89, -1, -1},	/* unmapped */
+	{90, -1, -1},	/* unmapped */
+	{91, -1, -1},	/* unmapped */
+	{92, -1, -1},	/* unmapped */
+	{93, -1, -1},	/* unmapped */
+	{94, -1, -1},	/* unmapped */
+	{95, -1, -1},	/* unmapped */
+	{96, -1, -1},	/* unmapped */
 };
+S1G_CHAN_PAIRS_ASSERT_SIZE(s1g_ht_chan_pairs_default);
 
 /** Implements the AU specific channelization scheme per IEEE Std 802.11-REVmf */
 static const struct s1g_ht_chan_pair s1g_ht_chan_pairs_au[] = {
@@ -203,7 +243,45 @@ static const struct s1g_ht_chan_pair s1g_ht_chan_pairs_au[] = {
 	{57, -1, -1}, /* unmapped */
 	{58, -1, -1}, /* unmapped */
 	{59, 171, 4},
+	{60, -1, -1},	/* unmapped */
+	{61, -1, -1},	/* unmapped */
+	{62, -1, -1},	/* unmapped */
+	{63, -1, -1},	/* unmapped */
+	{64, -1, -1},	/* unmapped */
+	{65, -1, -1},	/* unmapped */
+	{66, -1, -1},	/* unmapped */
+	{67, -1, -1},	/* unmapped */
+	{68, -1, -1},	/* unmapped */
+	{69, -1, -1},	/* unmapped */
+	{70, -1, -1},	/* unmapped */
+	{71, -1, -1},	/* unmapped */
+	{72, -1, -1},	/* unmapped */
+	{73, -1, -1},	/* unmapped */
+	{74, -1, -1},	/* unmapped */
+	{75, -1, -1},	/* unmapped */
+	{76, -1, -1},	/* unmapped */
+	{77, -1, -1},	/* unmapped */
+	{78, -1, -1},	/* unmapped */
+	{79, -1, -1},	/* unmapped */
+	{80, -1, -1},	/* unmapped */
+	{81, -1, -1},	/* unmapped */
+	{82, -1, -1},	/* unmapped */
+	{83, -1, -1},	/* unmapped */
+	{84, -1, -1},	/* unmapped */
+	{85, -1, -1},	/* unmapped */
+	{86, -1, -1},	/* unmapped */
+	{87, -1, -1},	/* unmapped */
+	{88, -1, -1},	/* unmapped */
+	{89, -1, -1},	/* unmapped */
+	{90, -1, -1},	/* unmapped */
+	{91, -1, -1},	/* unmapped */
+	{92, -1, -1},	/* unmapped */
+	{93, -1, -1},	/* unmapped */
+	{94, -1, -1},	/* unmapped */
+	{95, -1, -1},	/* unmapped */
+	{96, -1, -1},	/* unmapped */
 };
+S1G_CHAN_PAIRS_ASSERT_SIZE(s1g_ht_chan_pairs_au);
 
 /** Implements the AU specific channelization scheme per IEEE Std 802.11-2024 */
 static const struct s1g_ht_chan_pair s1g_ht_chan_pairs_au_2024[] = {
@@ -268,12 +346,50 @@ static const struct s1g_ht_chan_pair s1g_ht_chan_pairs_au_2024[] = {
 	{57, -1, -1}, /* unmapped */
 	{58, -1, -1}, /* unmapped */
 	{59, -1, -1}, /* unmapped */
+	{60, -1, -1},	/* unmapped */
+	{61, -1, -1},	/* unmapped */
+	{62, -1, -1},	/* unmapped */
+	{63, -1, -1},	/* unmapped */
+	{64, -1, -1},	/* unmapped */
+	{65, -1, -1},	/* unmapped */
+	{66, -1, -1},	/* unmapped */
+	{67, -1, -1},	/* unmapped */
+	{68, -1, -1},	/* unmapped */
+	{69, -1, -1},	/* unmapped */
+	{70, -1, -1},	/* unmapped */
+	{71, -1, -1},	/* unmapped */
+	{72, -1, -1},	/* unmapped */
+	{73, -1, -1},	/* unmapped */
+	{74, -1, -1},	/* unmapped */
+	{75, -1, -1},	/* unmapped */
+	{76, -1, -1},	/* unmapped */
+	{77, -1, -1},	/* unmapped */
+	{78, -1, -1},	/* unmapped */
+	{79, -1, -1},	/* unmapped */
+	{80, -1, -1},	/* unmapped */
+	{81, -1, -1},	/* unmapped */
+	{82, -1, -1},	/* unmapped */
+	{83, -1, -1},	/* unmapped */
+	{84, -1, -1},	/* unmapped */
+	{85, -1, -1},	/* unmapped */
+	{86, -1, -1},	/* unmapped */
+	{87, -1, -1},	/* unmapped */
+	{88, -1, -1},	/* unmapped */
+	{89, -1, -1},	/* unmapped */
+	{90, -1, -1},	/* unmapped */
+	{91, -1, -1},	/* unmapped */
+	{92, -1, -1},	/* unmapped */
+	{93, -1, -1},	/* unmapped */
+	{94, -1, -1},	/* unmapped */
+	{95, -1, -1},	/* unmapped */
+	{96, -1, -1},	/* unmapped */
 };
+S1G_CHAN_PAIRS_ASSERT_SIZE(s1g_ht_chan_pairs_au_2024);
 
 /** Implements the JP specific channelisation scheme */
 static const struct s1g_ht_chan_pair s1g_ht_chan_pairs_jp[] = {
 	/* nulls for alignment */
-	{-1, -1, -1,},	/* unmapped */
+	{-1, -1, -1},	/* unmapped */
 	{1, -1, -1},	/* unmapped */
 	{2, 38, 2},
 	{3, -1, -1},	/* unmapped */
@@ -333,36 +449,75 @@ static const struct s1g_ht_chan_pair s1g_ht_chan_pairs_jp[] = {
 	{57, -1, -1},	/* unmapped */
 	{58, -1, -1},	/* unmapped */
 	{59, -1, -1},	/* unmapped */
+	{60, -1, -1},	/* unmapped */
+	{61, -1, -1},	/* unmapped */
+	{62, -1, -1},	/* unmapped */
+	{63, -1, -1},	/* unmapped */
+	{64, -1, -1},	/* unmapped */
+	{65, -1, -1},	/* unmapped */
+	{66, -1, -1},	/* unmapped */
+	{67, -1, -1},	/* unmapped */
+	{68, -1, -1},	/* unmapped */
+	{69, -1, -1},	/* unmapped */
+	{70, -1, -1},	/* unmapped */
+	{71, -1, -1},	/* unmapped */
+	{72, -1, -1},	/* unmapped */
+	{73, -1, -1},	/* unmapped */
+	{74, -1, -1},	/* unmapped */
+	{75, -1, -1},	/* unmapped */
+	{76, -1, -1},	/* unmapped */
+	{77, -1, -1},	/* unmapped */
+	{78, -1, -1},	/* unmapped */
+	{79, -1, -1},	/* unmapped */
+	{80, -1, -1},	/* unmapped */
+	{81, -1, -1},	/* unmapped */
+	{82, -1, -1},	/* unmapped */
+	{83, -1, -1},	/* unmapped */
+	{84, -1, -1},	/* unmapped */
+	{85, -1, -1},	/* unmapped */
+	{86, -1, -1},	/* unmapped */
+	{87, -1, -1},	/* unmapped */
+	{88, -1, -1},	/* unmapped */
+	{89, -1, -1},	/* unmapped */
+	{90, -1, -1},	/* unmapped */
+	{91, -1, -1},	/* unmapped */
+	{92, -1, -1},	/* unmapped */
+	{93, -1, -1},	/* unmapped */
+	/* JP850 transition channels */
+	{94, 149, 1},
+	{95, 151, 2},
+	{96, 153, 1},
 };
+S1G_CHAN_PAIRS_ASSERT_SIZE(s1g_ht_chan_pairs_jp);
 
 /** Implements the KR specific channelisation scheme */
 static const struct s1g_ht_chan_pair s1g_ht_chan_pairs_kr[] = {
 	/* nulls for alignment */
 	{-1, -1, -1},
-	{1, 132, 1},
-	{2, 134, 2},
-	{3, 136, 1},
+	{1, 36, 1},
+	{2, -1, -1},	/* unmapped */
+	{3, 40, 1},
 	{4, -1, -1},	/* unmapped */
-	{5, 36, 1},
-	{6, 38, 2},
-	{7, 40, 1},
-	{8, 42, 4},
-	{9, 44, 1},
-	{10, 46, 2},
-	{11, 48, 1},
+	{5, 44, 1},
+	{6, -1, -1},	/* unmapped */
+	{7, 48, 1},
+	{8, -1, -1},	/* unmapped */
+	{9, 52, 1},
+	{10, -1, -1},	/* unmapped */
+	{11, 56, 1},
 	{12, -1, -1},	/* unmapped */
 	{13, -1, -1},	/* unmapped */
 	{14, -1, -1},	/* unmapped */
 	{15, -1, -1},	/* unmapped */
 	{16, -1, -1},	/* unmapped */
 	{17, -1, -1},	/* unmapped */
-	{18, 165, 1},
-	{19, 167, 2},
-	{20, 169, 1},
+	{18, -1, -1},	/* unmapped */
+	{19, -1, -1},	/* unmapped */
+	{20, -1, -1},	/* unmapped */
 	{21, -1, -1},	/* unmapped */
-	{22, 173, 1},
-	{23, 175, 2},
-	{24, 177, 1},
+	{22, -1, -1},	/* unmapped */
+	{23, -1, -1},	/* unmapped */
+	{24, -1, -1},	/* unmapped */
 	{25, -1, -1},	/* unmapped */
 	{26, -1, -1},	/* unmapped */
 	{27, -1, -1},	/* unmapped */
@@ -398,7 +553,45 @@ static const struct s1g_ht_chan_pair s1g_ht_chan_pairs_kr[] = {
 	{57, -1, -1},	/* unmapped */
 	{58, -1, -1},	/* unmapped */
 	{59, -1, -1},	/* unmapped */
+	{60, -1, -1},	/* unmapped */
+	{61, -1, -1},	/* unmapped */
+	{62, -1, -1},	/* unmapped */
+	{63, -1, -1},	/* unmapped */
+	{64, -1, -1},	/* unmapped */
+	{65, -1, -1},	/* unmapped */
+	{66, -1, -1},	/* unmapped */
+	{67, -1, -1},	/* unmapped */
+	{68, -1, -1},	/* unmapped */
+	{69, -1, -1},	/* unmapped */
+	{70, -1, -1},	/* unmapped */
+	{71, -1, -1},	/* unmapped */
+	{72, -1, -1},	/* unmapped */
+	{73, -1, -1},	/* unmapped */
+	{74, -1, -1},	/* unmapped */
+	{75, -1, -1},	/* unmapped */
+	{76, -1, -1},	/* unmapped */
+	{77, -1, -1},	/* unmapped */
+	{78, -1, -1},	/* unmapped */
+	{79, -1, -1},	/* unmapped */
+	{80, -1, -1},	/* unmapped */
+	{81, -1, -1},	/* unmapped */
+	{82, -1, -1},	/* unmapped */
+	{83, -1, -1},	/* unmapped */
+	{84, -1, -1},	/* unmapped */
+	{85, -1, -1},	/* unmapped */
+	{86, -1, -1},	/* unmapped */
+	{87, -1, -1},	/* unmapped */
+	{88, -1, -1},	/* unmapped */
+	{89, -1, -1},	/* unmapped */
+	{90, -1, -1},	/* unmapped */
+	{91, -1, -1},	/* unmapped */
+	{92, -1, -1},	/* unmapped */
+	{93, -1, -1},	/* unmapped */
+	{94, -1, -1},	/* unmapped */
+	{95, -1, -1},	/* unmapped */
+	{96, -1, -1},	/* unmapped */
 };
+S1G_CHAN_PAIRS_ASSERT_SIZE(s1g_ht_chan_pairs_kr);
 
 static const struct s1g_ht_chan_pair s1g_ht_chan_pairs_sg[] = {
 	/* nulls for alignment */
@@ -454,7 +647,53 @@ static const struct s1g_ht_chan_pair s1g_ht_chan_pairs_sg[] = {
 	{49, -1, -1},	/* unmapped */
 	{50, -1, -1},	/* unmapped */
 	{51, -1, -1},	/* unmapped */
+	{52, -1, -1},	/* unmapped */
+	{53, -1, -1},	/* unmapped */
+	{54, -1, -1},	/* unmapped */
+	{55, -1, -1},	/* unmapped */
+	{56, -1, -1},	/* unmapped */
+	{57, -1, -1},	/* unmapped */
+	{58, -1, -1},	/* unmapped */
+	{59, -1, -1},	/* unmapped */
+	{60, -1, -1},	/* unmapped */
+	{61, -1, -1},	/* unmapped */
+	{62, -1, -1},	/* unmapped */
+	{63, -1, -1},	/* unmapped */
+	{64, -1, -1},	/* unmapped */
+	{65, -1, -1},	/* unmapped */
+	{66, -1, -1},	/* unmapped */
+	{67, -1, -1},	/* unmapped */
+	{68, -1, -1},	/* unmapped */
+	{69, -1, -1},	/* unmapped */
+	{70, -1, -1},	/* unmapped */
+	{71, -1, -1},	/* unmapped */
+	{72, -1, -1},	/* unmapped */
+	{73, -1, -1},	/* unmapped */
+	{74, -1, -1},	/* unmapped */
+	{75, -1, -1},	/* unmapped */
+	{76, -1, -1},	/* unmapped */
+	{77, -1, -1},	/* unmapped */
+	{78, -1, -1},	/* unmapped */
+	{79, -1, -1},	/* unmapped */
+	{80, -1, -1},	/* unmapped */
+	{81, -1, -1},	/* unmapped */
+	{82, -1, -1},	/* unmapped */
+	{83, -1, -1},	/* unmapped */
+	{84, -1, -1},	/* unmapped */
+	{85, -1, -1},	/* unmapped */
+	{86, -1, -1},	/* unmapped */
+	{87, -1, -1},	/* unmapped */
+	{88, -1, -1},	/* unmapped */
+	{89, -1, -1},	/* unmapped */
+	{90, -1, -1},	/* unmapped */
+	{91, -1, -1},	/* unmapped */
+	{92, -1, -1},	/* unmapped */
+	{93, -1, -1},	/* unmapped */
+	{94, -1, -1},	/* unmapped */
+	{95, -1, -1},	/* unmapped */
+	{96, -1, -1},	/* unmapped */
 };
+S1G_CHAN_PAIRS_ASSERT_SIZE(s1g_ht_chan_pairs_sg);
 
 /** Pointer to the configured channelisation pair map */
 static const struct s1g_ht_chan_pair *s1g_ht_chan_pairs = s1g_ht_chan_pairs_default;
@@ -486,10 +725,8 @@ void morse_set_s1g_ht_chan_pairs(const char *cc)
 			s1g_ht_chan_pairs_au_2024;
 	else if (cc && strncmp("SG", cc, COUNTRY_CODE_LEN) == 0)
 		s1g_ht_chan_pairs = s1g_ht_chan_pairs_sg;
-	else if (cc && (strncmp("AR", cc, COUNTRY_CODE_LEN) == 0 ||
-			strncmp("CL", cc, COUNTRY_CODE_LEN) == 0 ||
-			strncmp("CO", cc, COUNTRY_CODE_LEN) == 0))
-		/* AR/CL/CO only support AU's REVmf channelization */
+	else if (morse_is_revmf_channelization_country(cc) && morse_cc_uses_au_channelization(cc))
+		/* Countries that follow AUs revmf channelization s1g->ht mapping */
 		s1g_ht_chan_pairs = s1g_ht_chan_pairs_au;
 	else
 		s1g_ht_chan_pairs = s1g_ht_chan_pairs_default;
@@ -529,15 +766,74 @@ static const char *ah_country[] = {
 	[MORSE_NZ] = "NZ",
 	[MORSE_SG] = "SG",
 	[MORSE_US] = "US",
+	[MORSE_AL] = "AL",
+	[MORSE_AT] = "AT",
+	[MORSE_BE] = "BE",
+	[MORSE_BA] = "BA",
+	[MORSE_BG] = "BG",
+	[MORSE_HR] = "HR",
+	[MORSE_CY] = "CY",
+	[MORSE_CZ] = "CZ",
+	[MORSE_DK] = "DK",
+	[MORSE_EE] = "EE",
+	[MORSE_FI] = "FI",
+	[MORSE_FR] = "FR",
+	[MORSE_DE] = "DE",
+	[MORSE_GR] = "GR",
+	[MORSE_HU] = "HU",
+	[MORSE_IS] = "IS",
+	[MORSE_IE] = "IE",
+	[MORSE_IT] = "IT",
+	[MORSE_LV] = "LV",
+	[MORSE_LI] = "LI",
+	[MORSE_LT] = "LT",
+	[MORSE_LU] = "LU",
+	[MORSE_MT] = "MT",
+	[MORSE_MD] = "MD",
+	[MORSE_NL] = "NL",
+	[MORSE_MK] = "MK",
+	[MORSE_NO] = "NO",
+	[MORSE_PL] = "PL",
+	[MORSE_PT] = "PT",
+	[MORSE_RO] = "RO",
+	[MORSE_SK] = "SK",
+	[MORSE_SI] = "SI",
+	[MORSE_ES] = "ES",
+	[MORSE_SE] = "SE",
+	[MORSE_CH] = "CH",
+	[MORSE_TR] = "TR",
+	[MORSE_AD] = "AD",
+	[MORSE_GF] = "GF",
+	[MORSE_GE] = "GE",
+	[MORSE_KE] = "KE",
+	[MORSE_MC] = "MC",
+	[MORSE_ME] = "ME",
+	[MORSE_SM] = "SM",
+	[MORSE_RS] = "RS",
+	[MORSE_UG] = "UG",
+	[MORSE_UA] = "UA",
+	[MORSE_VA] = "VA",
+	[MORSE_BS] = "BS",
+	[MORSE_BB] = "BB",
+	[MORSE_BZ] = "BZ",
+	[MORSE_CR] = "CR",
+	[MORSE_GY] = "GY",
+	[MORSE_HN] = "HN",
+	[MORSE_JM] = "JM",
+	[MORSE_NI] = "NI",
+	[MORSE_PA] = "PA",
+	[MORSE_EC] = "EC",
+	[MORSE_SV] = "SV",
+	[MORSE_HT] = "HT",
+	[MORSE_UY] = "UY",
 };
 
 static const struct ah_class us1 = {
 	.s1g_freq_start = 902000,
 	.s1g_op_class = 1,
-	.s1g_op_class_idx = 1,
 	.global_op_class = 68,
 	.s1g_width = IEEE80211_CHAN_1MHZ,
-	.cc_list = {"US", "CA", "BR", "MX"},
+	.cc_list = {"US", "CA", "BR", "MX", "BS", "BB", "BZ", "CR", "GY", "HN", "JM", "NI", "PA"},
 	.chans = (
 		S1G_CHAN_ENABLED_FLAG(1) |
 		S1G_CHAN_ENABLED_FLAG(3) |
@@ -571,10 +867,9 @@ static const struct ah_class us1 = {
 static const struct ah_class us2 = {
 	.s1g_freq_start = 902000,
 	.s1g_op_class = 2,
-	.s1g_op_class_idx = 2,
 	.global_op_class = 69,
 	.s1g_width = IEEE80211_CHAN_2MHZ,
-	.cc_list = {"US", "CA", "BR", "MX"},
+	.cc_list = {"US", "CA", "BR", "MX", "BS", "BB", "BZ", "CR", "GY", "HN", "JM", "NI", "PA"},
 	.chans = (
 		S1G_CHAN_ENABLED_FLAG(2) |
 		S1G_CHAN_ENABLED_FLAG(6) |
@@ -595,10 +890,9 @@ static const struct ah_class us2 = {
 static const struct ah_class us3 = {
 	.s1g_freq_start = 902000,
 	.s1g_op_class = 3,
-	.s1g_op_class_idx = 3,
 	.global_op_class = 70,
 	.s1g_width = IEEE80211_CHAN_4MHZ,
-	.cc_list = {"US", "CA", "BR", "MX"},
+	.cc_list = {"US", "CA", "BR", "MX", "BS", "BB", "BZ", "CR", "GY", "HN", "JM", "NI", "PA"},
 	.chans = (
 		S1G_CHAN_ENABLED_FLAG(8) |
 		S1G_CHAN_ENABLED_FLAG(16) |
@@ -612,10 +906,9 @@ static const struct ah_class us3 = {
 static const struct ah_class us4 = {
 	.s1g_freq_start = 902000,
 	.s1g_op_class = 4,
-	.s1g_op_class_idx = 4,
 	.global_op_class = 71,
 	.s1g_width = IEEE80211_CHAN_8MHZ,
-	.cc_list = {"US", "CA", "BR", "MX"},
+	.cc_list = {"US", "CA", "BR", "MX", "BS", "BB", "BZ", "CR", "GY", "HN", "JM", "NI", "PA"},
 	.chans = (
 		S1G_CHAN_ENABLED_FLAG(12) |
 		S1G_CHAN_ENABLED_FLAG(28) |
@@ -626,10 +919,15 @@ static const struct ah_class us4 = {
 static const struct ah_class eu6 = {
 	.s1g_freq_start = 863000,
 	.s1g_op_class = 6,
-	.s1g_op_class_idx = 6,
 	.global_op_class = 66,
 	.s1g_width = IEEE80211_CHAN_1MHZ,
-	.cc_list = {"EU", "GB"},
+	.cc_list = {"EU", "GB", "IN",
+		    "AL", "AT", "BE", "BA", "BG", "HR", "CY", "CZ", "DK", "EE",
+		    "FI", "FR", "DE", "GR", "HU", "IS", "IE", "IT", "LV", "LI",
+		    "LT", "LU", "MT", "MD", "NL", "MK", "NO", "PL", "PT", "RO",
+		    "SK", "SI", "ES", "SE", "CH", "TR", "AD", "GF", "GE", "KE",
+		    "MC", "ME", "SM", "RS", "UG", "UA", "VA"},
+	/* Default (EU/GB) channels */
 	.chans = (
 		S1G_CHAN_ENABLED_FLAG(1) |
 		S1G_CHAN_ENABLED_FLAG(3) |
@@ -637,12 +935,20 @@ static const struct ah_class eu6 = {
 		S1G_CHAN_ENABLED_FLAG(7) |
 		S1G_CHAN_ENABLED_FLAG(9)
 	),
+	/* IN permits only the upper three channels of class 6 */
+	.cc_chan_subset = {
+		.cc_list = {"IN"},
+		.chans = (
+			S1G_CHAN_ENABLED_FLAG(5) |
+			S1G_CHAN_ENABLED_FLAG(7) |
+			S1G_CHAN_ENABLED_FLAG(9)
+		),
+	},
 };
 
 static const struct ah_class jp8 = {
 	.s1g_freq_start = 916500,
 	.s1g_op_class = 8,
-	.s1g_op_class_idx = 8,
 	.global_op_class = 73,
 	.s1g_width = IEEE80211_CHAN_1MHZ,
 	.cc_list = {"JP"},
@@ -659,7 +965,6 @@ static const struct ah_class jp8 = {
 static const struct ah_class jp9 = {
 	.s1g_freq_start = 922500,
 	.s1g_op_class = 9,
-	.s1g_op_class_idx = 9,
 	.global_op_class = 64,
 	.s1g_width = IEEE80211_CHAN_2MHZ,
 	.cc_list = {"JP"},
@@ -672,7 +977,6 @@ static const struct ah_class jp9 = {
 static const struct ah_class jp10 = {
 	.s1g_freq_start = 922500,
 	.s1g_op_class = 10,
-	.s1g_op_class_idx = 10,
 	.global_op_class = 64,
 	.s1g_width = IEEE80211_CHAN_2MHZ,
 	.cc_list = {"JP"},
@@ -685,7 +989,6 @@ static const struct ah_class jp10 = {
 static const struct ah_class jp11 = {
 	.s1g_freq_start = 906500,
 	.s1g_op_class = 11,
-	.s1g_op_class_idx = 11,
 	.global_op_class = 65,
 	.s1g_width = IEEE80211_CHAN_4MHZ,
 	.cc_list = {"JP"},
@@ -695,17 +998,44 @@ static const struct ah_class jp11 = {
 static const struct ah_class jp12 = {
 	.s1g_freq_start = 906500,
 	.s1g_op_class = 12,
-	.s1g_op_class_idx = 12,
 	.global_op_class = 65,
 	.s1g_width = IEEE80211_CHAN_4MHZ,
 	.cc_list = {"JP"},
 	.chans = S1G_CHAN_ENABLED_FLAG(38),
 };
 
+/*
+ * JP850 transition channels, approved by the Japan regulator.
+ * Proprietary op classes (S1G == global); may need renumbering if formally standardized.
+ * The channels don't fit in the chans bitmap, so stored in extra_chans.
+ */
+static const u8 jp195_chans[] = {94, 96};
+
+static const struct ah_class jp195 = {
+	.s1g_freq_start = 800000,
+	.s1g_op_class = 195,
+	.global_op_class = 195,
+	.s1g_width = IEEE80211_CHAN_1MHZ,
+	.cc_list = {"JP"},
+	.extra_chans = jp195_chans,
+	.extra_chans_len = ARRAY_SIZE(jp195_chans),
+};
+
+static const u8 jp196_chans[] = {95};
+
+static const struct ah_class jp196 = {
+	.s1g_freq_start = 800000,
+	.s1g_op_class = 196,
+	.global_op_class = 196,
+	.s1g_width = IEEE80211_CHAN_2MHZ,
+	.cc_list = {"JP"},
+	.extra_chans = jp196_chans,
+	.extra_chans_len = ARRAY_SIZE(jp196_chans),
+};
+
 static const struct ah_class kr14 = {
-	.s1g_freq_start = 917500,
+	.s1g_freq_start = 917000,
 	.s1g_op_class = 14,
-	.s1g_op_class_idx = 14,
 	.global_op_class = 74,
 	.s1g_width = IEEE80211_CHAN_1MHZ,
 	.cc_list = {"KR"},
@@ -715,46 +1045,13 @@ static const struct ah_class kr14 = {
 		S1G_CHAN_ENABLED_FLAG(5) |
 		S1G_CHAN_ENABLED_FLAG(7) |
 		S1G_CHAN_ENABLED_FLAG(9) |
-		S1G_CHAN_ENABLED_FLAG(11)|
-		S1G_CHAN_ENABLED_FLAG(18)|
-		S1G_CHAN_ENABLED_FLAG(20)|
-		S1G_CHAN_ENABLED_FLAG(22)|
-		S1G_CHAN_ENABLED_FLAG(24)
-	),
-};
-
-static const struct ah_class kr15 = {
-	.s1g_freq_start = 917500,
-	.s1g_op_class = 15,
-	.s1g_op_class_idx = 15,
-	.global_op_class = 75,
-	.s1g_width = IEEE80211_CHAN_2MHZ,
-	.cc_list = {"KR"},
-	.chans = (
-		S1G_CHAN_ENABLED_FLAG(2) |
-		S1G_CHAN_ENABLED_FLAG(6) |
-		S1G_CHAN_ENABLED_FLAG(10)|
-		S1G_CHAN_ENABLED_FLAG(19)|
-		S1G_CHAN_ENABLED_FLAG(23)
-	),
-};
-
-static const struct ah_class kr16 = {
-	.s1g_freq_start = 917500,
-	.s1g_op_class = 16,
-	.s1g_op_class_idx = 16,
-	.global_op_class = 76,
-	.s1g_width = IEEE80211_CHAN_4MHZ,
-	.cc_list = {"KR"},
-	.chans = (
-		S1G_CHAN_ENABLED_FLAG(8)
+		S1G_CHAN_ENABLED_FLAG(11)
 	),
 };
 
 static const struct ah_class sg18 = {
 	.s1g_freq_start = 902000,
 	.s1g_op_class = 18,
-	.s1g_op_class_idx = 18,
 	.global_op_class = 68,
 	.s1g_width = IEEE80211_CHAN_1MHZ,
 	.cc_list = {"SG"},
@@ -773,7 +1070,6 @@ static const struct ah_class sg18 = {
 static const struct ah_class sg20 = {
 	.s1g_freq_start = 902000,
 	.s1g_op_class = 20,
-	.s1g_op_class_idx = 20,
 	.global_op_class = 61,
 	.s1g_width = IEEE80211_CHAN_2MHZ,
 	.cc_list = {"SG"},
@@ -788,7 +1084,6 @@ static const struct ah_class sg20 = {
 static const struct ah_class sg21 = {
 	.s1g_freq_start = 902000,
 	.s1g_op_class = 21,
-	.s1g_op_class_idx = 21,
 	.global_op_class = 62,
 	.s1g_width = IEEE80211_CHAN_4MHZ,
 	.cc_list = {"SG"},
@@ -801,7 +1096,6 @@ static const struct ah_class sg21 = {
 static const struct ah_class au22_2020 = {
 	.s1g_freq_start = 902000,
 	.s1g_op_class = 22,
-	.s1g_op_class_idx = 22,
 	.global_op_class = 68,
 	.s1g_width = IEEE80211_CHAN_1MHZ,
 	.cc_list = {"AU"},
@@ -825,7 +1119,6 @@ static const struct ah_class au22_2020 = {
 static const struct ah_class au23_2020 = {
 	.s1g_freq_start = 902000,
 	.s1g_op_class = 23,
-	.s1g_op_class_idx = 23,
 	.global_op_class = 69,
 	.s1g_width = IEEE80211_CHAN_2MHZ,
 	.cc_list = {"AU"},
@@ -842,7 +1135,6 @@ static const struct ah_class au23_2020 = {
 static const struct ah_class au24_2020 = {
 	.s1g_freq_start = 902000,
 	.s1g_op_class = 24,
-	.s1g_op_class_idx = 24,
 	.global_op_class = 70,
 	.s1g_width = IEEE80211_CHAN_4MHZ,
 	.cc_list = {"AU"},
@@ -856,7 +1148,6 @@ static const struct ah_class au24_2020 = {
 static const struct ah_class au25_2020 = {
 	.s1g_freq_start = 902000,
 	.s1g_op_class = 25,
-	.s1g_op_class_idx = 25,
 	.global_op_class = 71,
 	.s1g_width = IEEE80211_CHAN_8MHZ,
 	.cc_list = {"AU"},
@@ -868,10 +1159,9 @@ static const struct ah_class au25_2020 = {
 static const struct ah_class au22 = {
 	.s1g_freq_start = 902000,
 	.s1g_op_class = 22,
-	.s1g_op_class_idx = 22,
 	.global_op_class = 50,
 	.s1g_width = IEEE80211_CHAN_1MHZ,
-	.cc_list = {"AU", "AR", "CL", "CO"},
+	.cc_list = {"AU", "AR", "CL", "CO", "EC", "SV", "HT", "UY"},
 	.chans = (
 		S1G_CHAN_ENABLED_FLAG(28) |
 		S1G_CHAN_ENABLED_FLAG(30) |
@@ -891,10 +1181,9 @@ static const struct ah_class au22 = {
 static const struct ah_class au23 = {
 	.s1g_freq_start = 902000,
 	.s1g_op_class = 23,
-	.s1g_op_class_idx = 23,
 	.global_op_class = 51,
 	.s1g_width = IEEE80211_CHAN_2MHZ,
-	.cc_list = {"AU", "AR", "CL", "CO"},
+	.cc_list = {"AU", "AR", "CL", "CO", "EC", "SV", "HT", "UY"},
 	.chans = (
 		S1G_CHAN_ENABLED_FLAG(29) |
 		S1G_CHAN_ENABLED_FLAG(33) |
@@ -909,10 +1198,9 @@ static const struct ah_class au23 = {
 static const struct ah_class au24 = {
 	.s1g_freq_start = 902000,
 	.s1g_op_class = 24,
-	.s1g_op_class_idx = 24,
 	.global_op_class = 52,
 	.s1g_width = IEEE80211_CHAN_4MHZ,
-	.cc_list = {"AU", "AR", "CL", "CO"},
+	.cc_list = {"AU", "AR", "CL", "CO", "EC", "SV", "HT", "UY"},
 	.chans = (
 		S1G_CHAN_ENABLED_FLAG(31) |
 		S1G_CHAN_ENABLED_FLAG(39) |
@@ -924,10 +1212,9 @@ static const struct ah_class au24 = {
 static const struct ah_class au25 = {
 	.s1g_freq_start = 902000,
 	.s1g_op_class = 25,
-	.s1g_op_class_idx = 25,
 	.global_op_class = 53,
 	.s1g_width = IEEE80211_CHAN_8MHZ,
-	.cc_list = {"AU", "AR", "CL", "CO"},
+	.cc_list = {"AU", "AR", "CL", "CO", "EC", "SV", "HT", "UY"},
 	.chans = (
 		S1G_CHAN_ENABLED_FLAG(35) |
 		S1G_CHAN_ENABLED_FLAG(43)
@@ -938,10 +1225,9 @@ static const struct ah_class au25 = {
 static const struct ah_class au39 = {
 	.s1g_freq_start = 894000,
 	.s1g_op_class = 39,
-	.s1g_op_class_idx = 39,
 	.global_op_class = 48,
 	.s1g_width = IEEE80211_CHAN_4MHZ,
-	.cc_list = {"AU", "AR", "CL", "CO"},
+	.cc_list = {"AU", "AR", "CL", "CO", "EC", "SV", "HT", "UY"},
 	.chans = (
 		S1G_CHAN_ENABLED_FLAG(51) |
 		S1G_CHAN_ENABLED_FLAG(59)
@@ -952,10 +1238,9 @@ static const struct ah_class au39 = {
 static const struct ah_class au40 = {
 	.s1g_freq_start = 894000,
 	.s1g_op_class = 40,
-	.s1g_op_class_idx = 40,
 	.global_op_class = 49,
 	.s1g_width = IEEE80211_CHAN_8MHZ,
-	.cc_list = {"AU", "AR", "CL", "CO"},
+	.cc_list = {"AU", "AR", "CL", "CO", "EC", "SV", "HT", "UY"},
 	.chans = (
 		S1G_CHAN_ENABLED_FLAG(55)
 	),
@@ -964,7 +1249,6 @@ static const struct ah_class au40 = {
 static const struct ah_class nz26 = {
 	.s1g_freq_start = 902000,
 	.s1g_op_class = 26,
-	.s1g_op_class_idx = 26,
 	.global_op_class = 68,
 	.s1g_width = IEEE80211_CHAN_1MHZ,
 	.cc_list = {"NZ"},
@@ -989,7 +1273,6 @@ static const struct ah_class nz26 = {
 static const struct ah_class nz27 = {
 	.s1g_freq_start = 902000,
 	.s1g_op_class = 27,
-	.s1g_op_class_idx = 27,
 	.global_op_class = 69,
 	.s1g_width = IEEE80211_CHAN_2MHZ,
 	.cc_list = {"NZ"},
@@ -1006,7 +1289,6 @@ static const struct ah_class nz27 = {
 static const struct ah_class nz28 = {
 	.s1g_freq_start = 902000,
 	.s1g_op_class = 28,
-	.s1g_op_class_idx = 28,
 	.global_op_class = 70,
 	.s1g_width = IEEE80211_CHAN_4MHZ,
 	.cc_list = {"NZ"},
@@ -1020,7 +1302,6 @@ static const struct ah_class nz28 = {
 static const struct ah_class nz29 = {
 	.s1g_freq_start = 902000,
 	.s1g_op_class = 29,
-	.s1g_op_class_idx = 29,
 	.global_op_class = 71,
 	.s1g_width = IEEE80211_CHAN_8MHZ,
 	.cc_list = {"NZ"},
@@ -1032,21 +1313,30 @@ static const struct ah_class nz29 = {
 static const struct ah_class eu30 = {
 	.s1g_freq_start = 901400,
 	.s1g_op_class = 30,
-	.s1g_op_class_idx = 30,
 	.global_op_class = 77,
 	.s1g_width = IEEE80211_CHAN_1MHZ,
-	.cc_list = {"ZZ"}, /* Setting to ZZ till operating class 77 is supported */
+	.cc_list = {"AT", "BE", "BG", "FI", "FR", "GB", "IS", "IE", "IT", "LT",
+		    "MD", "MK", "PT", "SK", "SI", "SE", "TR", "UG", "CY", "DK",
+		    "HU", "LV", "PL", "ES", "LU"},
+	/* Default: full class 77 channel set (channels 31, 33, 35) */
 	.chans = (
 		S1G_CHAN_ENABLED_FLAG(31)|
 		S1G_CHAN_ENABLED_FLAG(33)|
 		S1G_CHAN_ENABLED_FLAG(35)
 	),
+	/* These countries permit only the upper two channels of class 77 */
+	.cc_chan_subset = {
+		.cc_list = {"BG", "FI", "FR", "GB", "IT", "TR", "LU"},
+		.chans = (
+			S1G_CHAN_ENABLED_FLAG(33)|
+			S1G_CHAN_ENABLED_FLAG(35)
+		),
+	},
 };
 
 static const struct ah_class sg31 = {
 	.s1g_freq_start = 902000,
 	.s1g_op_class = 31,
-	.s1g_op_class_idx = 31,
 	.global_op_class = 63,
 	.s1g_width = IEEE80211_CHAN_8MHZ,
 	.cc_list = {"SG"},
@@ -1055,141 +1345,102 @@ static const struct ah_class sg31 = {
 	),
 };
 
-static const struct ah_class in32 = {
-	.s1g_freq_start = 863000,
-	.s1g_op_class = 6,
-	.s1g_op_class_idx = 32,
-	.global_op_class = 66,
-	.s1g_width = IEEE80211_CHAN_1MHZ,
-	.cc_list = {"IN"},
-	.chans = (
-		S1G_CHAN_ENABLED_FLAG(5)|
-		S1G_CHAN_ENABLED_FLAG(7)|
-		S1G_CHAN_ENABLED_FLAG(9)
-	),
-};
-
-
 /* Operating classes per IEEE Std 802.11-2020 */
 static const struct ah_class
-		*s1g_op_classes_2020[] = {
-	NULL,
-	&us1,
-	&us2,
-	&us3,
-	&us4,
-	NULL,
-	&eu6,
-	NULL,
-	&jp8,
-	&jp9,
-	&jp10,
-	&jp11,
-	&jp12,
-	NULL,
-	&kr14,
-	&kr15,
-	&kr16,
-	NULL,
-	&sg18,
-	NULL,
-	&sg20,
-	&sg21,
-	&au22_2020,
-	&au23_2020,
-	&au24_2020,
-	&au25_2020,
-	&nz26,
-	&nz27,
-	&nz28,
-	&nz29,
-	&eu30,
-	&sg31,
-	&in32,
+		*s1g_op_classes_2020[S1G_OP_CLASS_TABLE_LEN] = {
+	[1] = &us1,
+	[2] = &us2,
+	[3] = &us3,
+	[4] = &us4,
+	[6] = &eu6,
+	[8] = &jp8,
+	[9] = &jp9,
+	[10] = &jp10,
+	[11] = &jp11,
+	[12] = &jp12,
+	[14] = &kr14,
+	[18] = &sg18,
+	[20] = &sg20,
+	[21] = &sg21,
+	[22] = &au22_2020,
+	[23] = &au23_2020,
+	[24] = &au24_2020,
+	[25] = &au25_2020,
+	[26] = &nz26,
+	[27] = &nz27,
+	[28] = &nz28,
+	[29] = &nz29,
+	[30] = &eu30,
+	[31] = &sg31,
+	/* JP850MHz Proprietary Operating classes */
+	[MORSE_JP850_1MHZ_OP_CLASS] = &jp195,
+	[MORSE_JP850_2MHZ_OP_CLASS] = &jp196,
 };
 
 /* Operating classes per IEEE Std 802.11-REVmf */
 static const struct ah_class
-		*s1g_op_classes_revmf[] = {
-	NULL,
-	&us1,
-	&us2,
-	&us3,
-	&us4,
-	NULL,
-	&eu6,
-	NULL,
-	&jp8,
-	&jp9,
-	&jp10,
-	&jp11,
-	&jp12,
-	NULL,
-	&kr14,
-	&kr15,
-	&kr16,
-	NULL,
-	&sg18,
-	NULL,
-	&sg20,
-	&sg21,
-	&au22,
-	&au23,
-	&au24,
-	&au25,
-	&nz26,
-	&nz27,
-	&nz28,
-	&nz29,
-	&eu30,
-	&sg31,
-	&in32,
-	NULL,
-	NULL,
-	NULL,
-	NULL,
-	NULL,
-	NULL,
-	&au39,
-	&au40,
+		*s1g_op_classes_revmf[S1G_OP_CLASS_TABLE_LEN] = {
+	[1] = &us1,
+	[2] = &us2,
+	[3] = &us3,
+	[4] = &us4,
+	[6] = &eu6,
+	[8] = &jp8,
+	[9] = &jp9,
+	[10] = &jp10,
+	[11] = &jp11,
+	[12] = &jp12,
+	[14] = &kr14,
+	[18] = &sg18,
+	[20] = &sg20,
+	[21] = &sg21,
+	[22] = &au22,
+	[23] = &au23,
+	[24] = &au24,
+	[25] = &au25,
+	[26] = &nz26,
+	[27] = &nz27,
+	[28] = &nz28,
+	[29] = &nz29,
+	[30] = &eu30,
+	[31] = &sg31,
+	[39] = &au39,
+	[40] = &au40,
+	/* JP850MHz Proprietary Operating classes */
+	[MORSE_JP850_1MHZ_OP_CLASS] = &jp195,
+	[MORSE_JP850_2MHZ_OP_CLASS] = &jp196,
 };
 
 /* Operating classes per IEEE Std 802.11-2024 */
 static const struct ah_class
-		*s1g_op_classes_2024[] = {
-	NULL,
-	&us1,
-	&us2,
-	&us3,
-	&us4,
-	NULL,
-	&eu6,
-	NULL,
-	&jp8,
-	&jp9,
-	&jp10,
-	&jp11,
-	&jp12,
-	NULL,
-	&kr14,
-	&kr15,
-	&kr16,
-	NULL,
-	&sg18,
-	NULL,
-	&sg20,
-	&sg21,
-	&au22,
-	&au23,
-	&au24,
-	&au25,
-	&nz26,
-	&nz27,
-	&nz28,
-	&nz29,
-	&eu30,
-	&sg31,
-	&in32,
+		*s1g_op_classes_2024[S1G_OP_CLASS_TABLE_LEN] = {
+	[1] = &us1,
+	[2] = &us2,
+	[3] = &us3,
+	[4] = &us4,
+	[6] = &eu6,
+	[8] = &jp8,
+	[9] = &jp9,
+	[10] = &jp10,
+	[11] = &jp11,
+	[12] = &jp12,
+	[14] = &kr14,
+	[18] = &sg18,
+	[20] = &sg20,
+	[21] = &sg21,
+	[22] = &au22,
+	[23] = &au23,
+	[24] = &au24,
+	[25] = &au25,
+	[26] = &nz26,
+	[27] = &nz27,
+	[28] = &nz28,
+	[29] = &nz29,
+	[30] = &eu30,
+	[31] = &sg31,
+	/* JP850MHz Proprietary Operating classes */
+	[MORSE_JP850_1MHZ_OP_CLASS] = &jp195,
+	[MORSE_JP850_2MHZ_OP_CLASS] = &jp196,
 };
 
 static const struct ah_class **s1g_op_classes = s1g_op_classes_revmf;
@@ -1200,19 +1451,60 @@ static const char * const mors_multi_channelization_countries[] = {
 	"AU",
 };
 
-bool morse_is_multi_channelization_country(const char *alpha)
+static const char * const mors_revmf_only_channelization_countries[] = {
+	"CO",
+	"CL",
+	"AR",
+	"EC",
+	"SV",
+	"HT",
+	"UY",
+};
+
+static const char * const mors_au_channelization_countries[] = {
+	"AU",
+	"CO",
+	"CL",
+	"AR",
+	"EC",
+	"SV",
+	"HT",
+	"UY",
+};
+
+static bool morse_cc_in_list(const char *alpha, const char * const list[], size_t len)
 {
 	size_t i;
 
 	if (!alpha)
 		return false;
 
-	for (i = 0; i < ARRAY_SIZE(mors_multi_channelization_countries); i++) {
-		if (strncmp(alpha, mors_multi_channelization_countries[i], COUNTRY_CODE_LEN) == 0)
+	for (i = 0; i < len; i++) {
+		if (strncmp(alpha, list[i], COUNTRY_CODE_LEN) == 0)
 			return true;
 	}
 	return false;
 }
+
+bool morse_is_multi_channelization_country(const char *alpha)
+{
+	return morse_cc_in_list(alpha, mors_multi_channelization_countries,
+				 ARRAY_SIZE(mors_multi_channelization_countries));
+}
+
+bool morse_is_revmf_channelization_country(const char *alpha)
+{
+	return morse_cc_in_list(alpha, mors_revmf_only_channelization_countries,
+				 ARRAY_SIZE(mors_revmf_only_channelization_countries));
+}
+
+/* Returns true if the country is one of those sharing the AU-style HT channelization. */
+bool morse_cc_uses_au_channelization(const char *alpha)
+{
+	return morse_cc_in_list(alpha, mors_au_channelization_countries,
+				 ARRAY_SIZE(mors_au_channelization_countries));
+}
+
 
 void morse_set_channelization_scheme(char *country, u32 channelization_scheme)
 {
@@ -1250,16 +1542,8 @@ int morse_ap_configure_channelization(char *country, u8 op_class)
 				return -1;
 			}
 		}
-	}
-
-	/* AR/CL/CO only support AU's REVmf channelization */
-	if ((strncmp(country, "AR", COUNTRY_CODE_LEN) == 0 ||
-	     strncmp(country, "CL", COUNTRY_CODE_LEN) == 0 ||
-	     strncmp(country, "CO", COUNTRY_CODE_LEN) == 0) &&
-	    channelization_scheme != CHANNELIZATION_SCHEME_IEEE80211_REVMF) {
-		wpa_printf(MSG_ERROR, "%s: %c%c is only supported with REVmf channelization\n",
-			__func__, country[0], country[1]);
-		return -1;
+	} else if (morse_is_revmf_channelization_country(country)) {
+		channelization_scheme = CHANNELIZATION_SCHEME_IEEE80211_REVMF;
 	}
 
 	wpa_printf(MSG_INFO, "%s: channelization scheme %u country %c%c\n", __func__,
@@ -1292,13 +1576,10 @@ int morse_sta_configure_channelization(struct wpa_supplicant *wpa_s, char *count
 	}
 #endif /* CONFIG_DRIVER_NL80211_MORSE */
 
-	/* AR/CL/CO only support AU's REVmf channelization */
-	if ((strncmp(country, "AR", COUNTRY_CODE_LEN) == 0 ||
-	     strncmp(country, "CL", COUNTRY_CODE_LEN) == 0 ||
-	     strncmp(country, "CO", COUNTRY_CODE_LEN) == 0) &&
+	if (morse_is_revmf_channelization_country(country) &&
 	    driver_channelization_scheme != CHANNELIZATION_SCHEME_IEEE80211_REVMF) {
 		wpa_printf(MSG_ERROR, "%s: %c%c is only supported with REVmf channelization\n",
-			__func__, country[0], country[1]);
+					__func__, country[0], country[1]);
 		return -1;
 	}
 
@@ -1316,20 +1597,24 @@ int morse_sta_configure_channelization(struct wpa_supplicant *wpa_s, char *count
  */
 enum s1g_op_class_type morse_s1g_op_class_valid(u8 s1g_op_class, const struct ah_class **class)
 {
-	/* known global range */
-	if ((s1g_op_class >= 48) && (s1g_op_class <= 77))
-		return OP_CLASS_S1G_GLOBAL;
+	if (class)
+		*class = NULL;
 
 	/* local index */
 	if (s1g_op_class < S1G_OP_CLASSES_LEN) {
 		const struct ah_class *ah_class = s1g_op_classes[s1g_op_class];
-		if (ah_class) {
-			if (class) {
+
+		if (ah_class && ah_class->s1g_op_class == s1g_op_class) {
+			if (class)
 				*class = ah_class;
-			}
 			return OP_CLASS_S1G_LOCAL;
 		}
 	}
+
+	if (((s1g_op_class >= 48) && (s1g_op_class <= 77)) ||
+	    ((s1g_op_class >= MORSE_JP850_1MHZ_OP_CLASS) &&
+	     (s1g_op_class <= MORSE_JP850_2MHZ_OP_CLASS)))
+		return OP_CLASS_S1G_GLOBAL;
 
 	return OP_CLASS_INVALID;
 }
@@ -1350,6 +1635,49 @@ static bool morse_s1g_op_class_has_cc(const struct ah_class *class, const char *
 		if (cc[0] == class->cc_list[i][0] && cc[1] == class->cc_list[i][1])
 			return true;
 		i++;
+	}
+
+	return false;
+}
+
+u64 morse_s1g_op_class_chans_for_cc(const struct ah_class *class, const char *cc)
+{
+	const struct ah_class_cc_chan_subset *subset;
+	unsigned int i;
+
+	if (!class)
+		return 0;
+
+	subset = &class->cc_chan_subset;
+	if (cc) {
+		for (i = 0; i < ARRAY_SIZE(subset->cc_list) && subset->cc_list[i][0]; i++) {
+			if (cc[0] == subset->cc_list[i][0] && cc[1] == subset->cc_list[i][1])
+				return subset->chans;
+		}
+	}
+
+	return class->chans;
+}
+
+bool morse_s1g_op_class_requires_morse_vendor_ie(u8 op_class)
+{
+	return op_class == MORSE_JP850_1MHZ_OP_CLASS || op_class == MORSE_JP850_2MHZ_OP_CLASS;
+}
+
+bool morse_s1g_op_class_has_channel(const struct ah_class *class, const char *cc, int s1g_chan)
+{
+	unsigned int i;
+
+	if (!class || s1g_chan < S1G_CHAN_MIN || s1g_chan > S1G_CHAN_MAX)
+		return false;
+
+	if (s1g_chan < (int)NUMBER_OF_BITS(class->chans))
+		return !!(morse_s1g_op_class_chans_for_cc(class, cc) &
+			  S1G_CHAN_ENABLED_FLAG(s1g_chan));
+
+	for (i = 0; i < class->extra_chans_len; i++) {
+		if (class->extra_chans[i] == s1g_chan)
+			return true;
 	}
 
 	return false;
@@ -1403,7 +1731,7 @@ static const struct ah_class *morse_s1g_op_class_global_search_validate_chan(int
 		if (class) {
 			if (class->global_op_class == global_op_class) {
 				if (morse_s1g_op_class_has_cc(class, cc) &&
-				    (S1G_CHAN_ENABLED_FLAG(s1g_chan) & class->chans))
+				    morse_s1g_op_class_has_channel(class, cc, s1g_chan))
 					return class;
 			}
 		}
@@ -1439,7 +1767,8 @@ static int morse_s1g_op_class_channel_valid(
 		return MORSE_INVALID_CHANNEL;
 	}
 
-	ret = (S1G_CHAN_ENABLED_FLAG(s1g_chan) & class->chans) ? s1g_chan : MORSE_INVALID_CHANNEL;
+	ret = morse_s1g_op_class_has_channel(class, NULL, s1g_chan) ?
+		s1g_chan : MORSE_INVALID_CHANNEL;
 	if (ret == MORSE_INVALID_CHANNEL && report_error)
 		wpa_printf(MSG_ERROR,
 			"Channel %d not found for s1g/global operating class %d/%d",
@@ -1448,23 +1777,24 @@ static int morse_s1g_op_class_channel_valid(
 	return ret;
 }
 
-int morse_cc_get_sec_channel_offset(int sec_chan_offset, char *cc)
+int morse_cc_get_sec_channel_offset(int sec_chan_offset, char *cc, int s1g_chan)
 {
-	int sec_chan = 0;
+	const int *offsets;
 
-	if (strncmp(cc, "JP" , COUNTRY_CODE_LEN) == 0) {
-		if (sec_chan_offset == HT_INFO_HT_PARAM_SECONDARY_CHNL_BELOW)
-			sec_chan = s1g_pri_1mhz_offset_jp[0];
-		else if (sec_chan_offset == HT_INFO_HT_PARAM_SECONDARY_CHNL_ABOVE)
-			sec_chan = s1g_pri_1mhz_offset_jp[1];
-	} else {
-		if (sec_chan_offset == HT_INFO_HT_PARAM_SECONDARY_CHNL_BELOW)
-			sec_chan = s1g_pri_1mhz_offset_default[0];
-		else if (sec_chan_offset == HT_INFO_HT_PARAM_SECONDARY_CHNL_ABOVE)
-			sec_chan = s1g_pri_1mhz_offset_default[1];
-	}
+	offsets = s1g_pri_1mhz_offset_default;
 
-	return sec_chan;
+	/* Only the 920MHz channels need the JP offsets */
+	if (cc && strncmp(cc, "JP", COUNTRY_CODE_LEN) == 0 &&
+	    s1g_chan >= S1G_CHAN_MIN && s1g_chan < MORSE_JP850_CHAN_MIN)
+		offsets = s1g_pri_1mhz_offset_jp;
+
+	if (sec_chan_offset == HT_INFO_HT_PARAM_SECONDARY_CHNL_BELOW)
+		return offsets[0];
+
+	if (sec_chan_offset == HT_INFO_HT_PARAM_SECONDARY_CHNL_ABOVE)
+		return offsets[1];
+
+	return 0;
 }
 
 #ifdef CONFIG_MORSE_5GHZ_MAPPED
@@ -1482,16 +1812,6 @@ int morse_ht_chan_to_s1g_chan(int ht_chan)
 			return s1g_ht_chan_pairs[i].s1g_channel;
 
 	return MORSE_S1G_RETURN_ERROR;
-}
-
-/* Returns true if the country is one of those sharing the AU-style HT channelization. */
-static bool morse_cc_uses_au_channelization(const char *country)
-{
-	return country &&
-	       (strncmp(country, "AU", COUNTRY_CODE_LEN) == 0 ||
-		strncmp(country, "AR", COUNTRY_CODE_LEN) == 0 ||
-		strncmp(country, "CL", COUNTRY_CODE_LEN) == 0 ||
-		strncmp(country, "CO", COUNTRY_CODE_LEN) == 0);
 }
 
 int morse_ht_freq_to_s1g_chan(int ht_freq, char *country)
@@ -1517,21 +1837,30 @@ int morse_ht_freq_to_s1g_chan(int ht_freq, char *country)
 	return morse_ht_chan_to_s1g_chan(ht_chan);
 }
 
-int morse_s1g_chan_to_ht20_prim_chan(int s1g_op_channel, int s1g_prim_1MHz_channel, char *cc)
+int morse_s1g_chan_to_ht20_prim_chan(int s1g_op_channel, int s1g_prim_channel, char *cc)
 {
 	int ht_chan;
 	int offset;
 
-	ht_chan = morse_s1g_chan_to_ht_chan(s1g_prim_1MHz_channel);
+	ht_chan = morse_s1g_chan_to_ht_chan(s1g_prim_channel);
+	if (ht_chan < 0)
+		return MORSE_S1G_RETURN_ERROR;
+
+	/* A primary that spans the operating channel's full width has no narrower
+	 * position within it left to disambiguate, so no offset is needed.
+	 */
+	if (s1g_op_channel == s1g_prim_channel)
+		return ht_chan;
+
 	if (strncmp(cc, "JP", COUNTRY_CODE_LEN) == 0)
-		offset = morse_ht_chan_offset_jp(s1g_op_channel, s1g_prim_1MHz_channel, 0);
+		offset = morse_ht_chan_offset_jp(s1g_op_channel, s1g_prim_channel, 0);
 	else if (morse_cc_uses_au_channelization(cc) &&
 		 !morse_dot11_2020_channelization_is_in_use())
-		offset = morse_ht_chan_offset_au(s1g_op_channel, s1g_prim_1MHz_channel, false);
+		offset = morse_ht_chan_offset_au(s1g_op_channel, s1g_prim_channel, false);
 	else
 		offset = 0;
 
-	if (ht_chan < 0 || offset < 0)
+	if (offset < 0)
 		return MORSE_S1G_RETURN_ERROR;
 
 	return ht_chan + offset;
@@ -1556,9 +1885,10 @@ int morse_ht_chan_offset_au(int chan, int primary_chan, bool ht)
 		return ht20mhz_offset;
 	}
 
-	/* Get ht20 channel offset value from S1G channel */
+	/* Get ht20 channel offset value from S1G channel, which this map has to have */
 	if (s1g_ht_chan_pairs == NULL ||
-	    (chan < S1G_CHAN_MIN || chan > S1G_CHAN_MAX))
+	    (chan < S1G_CHAN_MIN || chan > S1G_CHAN_MAX) ||
+	    s1g_ht_chan_pairs[chan].ht_channel < 0)
 		return MORSE_INVALID_CHANNEL;
 
 	/* In the AU regulatory, some channels have duplicate entries
@@ -1594,10 +1924,11 @@ int morse_ht_chan_offset_jp(int chan, int primary_chan, int ht)
 			return ht20mhz_offset;
 	}
 
-	/* Get ht20 channel offset value from S1G channel */
+	/* Get ht20 channel offset value from S1G channel, which this map has to have */
 	if (s1g_ht_chan_pairs == NULL ||
 	   (chan < S1G_CHAN_MIN ||
-	    chan > S1G_CHAN_MAX))
+	    chan > S1G_CHAN_MAX) ||
+	    s1g_ht_chan_pairs[chan].ht_channel < 0)
 		return MORSE_INVALID_CHANNEL;
 
 	/* In the JP regulatory, some primary channels have duplicate
@@ -1732,6 +2063,8 @@ int morse_s1g_op_class_ht_chan_to_s1g_freq(u8 s1g_op_class, int ht_chan)
 int morse_s1g_op_class_ht_freq_to_s1g_freq(u8 s1g_op_class, int ht_freq)
 {
 	unsigned int s1g_chan;
+	int s1g_freq;
+	int ht_chan;
 
 	if (s1g_ht_chan_pairs == NULL ||
 			ht_freq < 0)
@@ -1739,11 +2072,20 @@ int morse_s1g_op_class_ht_freq_to_s1g_freq(u8 s1g_op_class, int ht_freq)
 
 	/* for all S1G channels */
 	for (s1g_chan = S1G_CHAN_MIN; s1g_chan < S1G_CHAN_COUNT; s1g_chan++) {
+		ht_chan = morse_s1g_chan_to_ht_chan(s1g_chan);
+
+		if (ht_chan < 0)
+			continue;
+
 		/* check if the frequency for the mapped HT chan matches */
-		if (ieee80211_channel_to_frequency(s1g_ht_chan_pairs[s1g_chan].ht_channel,
-				NL80211_BAND_5GHZ) == ht_freq) {
-			/* found matching s1g chan, determine frequency */
-			return morse_s1g_op_class_chan_to_freq(s1g_op_class, s1g_chan);
+		if (ieee80211_channel_to_frequency(ht_chan, NL80211_BAND_5GHZ) == ht_freq) {
+			/* Found a matching S1G channel. Keep searching until it
+			 * also resolves for the requested operating class, since
+			 * more than one S1G channel can map to the same HT frequency.
+			 */
+			s1g_freq = morse_s1g_op_class_chan_to_freq(s1g_op_class, s1g_chan);
+			if (s1g_freq != MORSE_S1G_RETURN_ERROR)
+				return s1g_freq;
 		}
 	}
 
@@ -1757,6 +2099,7 @@ int morse_cc_ht_freq_to_s1g_freq(char *cc, int ht_freq)
 	unsigned int i;
 	u8 op_class = 0;
 	const struct ah_class *class;
+	int ht_chan;
 
 	if (s1g_ht_chan_pairs == NULL)
 		return MORSE_S1G_RETURN_ERROR;
@@ -1764,9 +2107,13 @@ int morse_cc_ht_freq_to_s1g_freq(char *cc, int ht_freq)
 
 	/* for all S1G channels */
 	for (s1g_chan = S1G_CHAN_MIN; s1g_chan < S1G_CHAN_COUNT; s1g_chan++) {
+		ht_chan = morse_s1g_chan_to_ht_chan(s1g_chan);
+
+		if (ht_chan < 0)
+			continue;
+
 		/* check if the frequency for the mapped HT chan matches */
-		if (ieee80211_channel_to_frequency(s1g_ht_chan_pairs[s1g_chan].ht_channel,
-				NL80211_BAND_5GHZ) == ht_freq) {
+		if (ieee80211_channel_to_frequency(ht_chan, NL80211_BAND_5GHZ) == ht_freq) {
 			/* found matching s1g chan */
 			break;
 		}
@@ -1782,7 +2129,7 @@ int morse_cc_ht_freq_to_s1g_freq(char *cc, int ht_freq)
 			continue;
 
 		/* check channel valid for class, matching BW, matching country */
-		if ((class->chans & S1G_CHAN_ENABLED_FLAG(s1g_chan)) &&
+		if (morse_s1g_op_class_has_channel(class, cc, s1g_chan) &&
 				class->s1g_width == morse_s1g_chan_to_bw(s1g_chan) &&
 				morse_s1g_op_class_has_cc(class, cc)) {
 			op_class = class->s1g_op_class;
@@ -1809,7 +2156,7 @@ int morse_s1g_op_class_first_chan(u8 s1g_op_class)
 		return MORSE_S1G_RETURN_ERROR;
 
 	for (i = S1G_CHAN_MIN; i < S1G_CHAN_COUNT; i++) {
-		if (class->chans & S1G_CHAN_ENABLED_FLAG(i))
+		if (morse_s1g_op_class_has_channel(class, NULL, i))
 			return i;
 	}
 
@@ -1949,6 +2296,14 @@ int morse_calculate_primary_s1g_channel_jp(int op_bw_mhz, int pr_bw_mhz, int s1g
 	case 1:
 		return s1g_op_chan;
 	case 2:
+		/* JP850 is contiguous, unlike the 920MHz channels */
+		if (s1g_op_chan == MORSE_JP850_2MHZ_CHAN) {
+			if (pr_bw_mhz == 1)
+				return s1g_op_chan + (pr_1mhz_chan_idx ? 1 : -1);
+			if (pr_bw_mhz == 2)
+				return s1g_op_chan;
+			return -EINVAL;
+		}
 		if (pr_bw_mhz == 1) {
 			offset = pr_1mhz_chan_idx ? 13 : 11;
 			return (s1g_op_chan + offset);
@@ -2038,7 +2393,8 @@ const struct ah_class *morse_s1g_ch_to_op_class(u8 s1g_bw, char *cc, int s1g_cha
 				return class;
 			if (morse_s1g_op_class_has_cc(class, cc)) {
 				if (morse_s1g_op_class_channel_valid(class,
-							s1g_chan, report_error) == s1g_chan)
+							s1g_chan, report_error) == s1g_chan &&
+				    morse_s1g_op_class_has_channel(class, cc, s1g_chan))
 					return class;
 			}
 		}
@@ -2088,7 +2444,7 @@ int morse_s1g_verify_op_class_country(u8 s1g_op_class, char *cc, u8 s1g_1mhz_pri
 				(morse_check_valid_s1g_prim_1Mhz_chan_index(
 						class->s1g_width, s1g_1mhz_prim_index))) {
 				/* valid */
-				return class->s1g_op_class_idx;
+				return class->s1g_op_class;
 			}
 			break;
 		case OP_CLASS_S1G_LOCAL:
@@ -2107,7 +2463,7 @@ int morse_s1g_verify_op_class_country(u8 s1g_op_class, char *cc, u8 s1g_1mhz_pri
 
 			if (class && morse_check_valid_s1g_prim_1Mhz_chan_index(class->s1g_width,
 									s1g_1mhz_prim_index))
-				return class->s1g_op_class_idx;
+				return class->s1g_op_class;
 			break;
 		/* invalid */
 		default:
@@ -2140,7 +2496,7 @@ int morse_s1g_verify_op_class_country_channel(u8 s1g_op_class, char *cc, int s1g
 								MORSE_INVALID_CHANNEL &&
 					morse_check_valid_s1g_prim_1Mhz_chan_index(class->s1g_width,
 									s1g_1mhz_prim_index))
-				return class->s1g_op_class_idx;
+				return class->s1g_op_class;
 		}
 		break;
 	case OP_CLASS_S1G_LOCAL:
@@ -2157,12 +2513,13 @@ int morse_s1g_verify_op_class_country_channel(u8 s1g_op_class, char *cc, int s1g
 			}
 		}
 
-		/* look up channel */
+		/* look up channel (honouring any per-country channel restriction) */
 		if (morse_s1g_op_class_channel_valid(class, s1g_chan, true) !=
 							MORSE_INVALID_CHANNEL &&
+			(!cc || morse_s1g_op_class_has_channel(class, cc, s1g_chan)) &&
 			morse_check_valid_s1g_prim_1Mhz_chan_index(class->s1g_width,
 							s1g_1mhz_prim_index))
-			return class->s1g_op_class_idx;
+			return class->s1g_op_class;
 		break;
 	/* invalid */
 	default:
@@ -2183,10 +2540,13 @@ int morse_s1g_get_start_freq_for_country(char *cc, int freq, int bw)
 		if (strncmp(ah_country[region], cc, COUNTRY_CODE_LEN) == 0) {
 			switch (region) {
 			case MORSE_AU:
-			/* AR/CL/CO follow AU's REVmf channelization */
 			case MORSE_AR:
 			case MORSE_CL:
 			case MORSE_CO:
+			case MORSE_EC:
+			case MORSE_SV:
+			case MORSE_HT:
+			case MORSE_UY:
 				/* Handle proposed AU channels */
 				if (!morse_dot11_2020_channelization_is_in_use() &&
 					((bw == IEEE80211_CHAN_8MHZ && freq == 921500) ||
@@ -2201,10 +2561,66 @@ int morse_s1g_get_start_freq_for_country(char *cc, int freq, int bw)
 			case MORSE_NZ:
 			case MORSE_US:
 			case MORSE_MX:
+			case MORSE_BS:
+			case MORSE_BB:
+			case MORSE_BZ:
+			case MORSE_CR:
+			case MORSE_GY:
+			case MORSE_HN:
+			case MORSE_JM:
+			case MORSE_NI:
+			case MORSE_PA:
 				start_freq = 902000;
 				break;
 			case MORSE_EU:
 			case MORSE_GB:
+			case MORSE_AL:
+			case MORSE_AT:
+			case MORSE_BE:
+			case MORSE_BA:
+			case MORSE_BG:
+			case MORSE_HR:
+			case MORSE_CY:
+			case MORSE_CZ:
+			case MORSE_DK:
+			case MORSE_EE:
+			case MORSE_FI:
+			case MORSE_FR:
+			case MORSE_DE:
+			case MORSE_GR:
+			case MORSE_HU:
+			case MORSE_IS:
+			case MORSE_IE:
+			case MORSE_IT:
+			case MORSE_LV:
+			case MORSE_LI:
+			case MORSE_LT:
+			case MORSE_LU:
+			case MORSE_MT:
+			case MORSE_MD:
+			case MORSE_NL:
+			case MORSE_MK:
+			case MORSE_NO:
+			case MORSE_PL:
+			case MORSE_PT:
+			case MORSE_RO:
+			case MORSE_SK:
+			case MORSE_SI:
+			case MORSE_ES:
+			case MORSE_SE:
+			case MORSE_CH:
+			case MORSE_TR:
+			case MORSE_AD:
+			case MORSE_GF:
+			case MORSE_GE:
+			case MORSE_KE:
+			case MORSE_MC:
+			case MORSE_ME:
+			case MORSE_SM:
+			case MORSE_RS:
+			case MORSE_UG:
+			case MORSE_UA:
+			case MORSE_VA:
 				if (freq > 901400)
 					start_freq = 901400;
 				else
@@ -2214,7 +2630,14 @@ int morse_s1g_get_start_freq_for_country(char *cc, int freq, int bw)
 				start_freq = 863000;
 				break;
 			case MORSE_JP:
-				if ((freq % 1000) == 500) {
+				if (freq >= MORSE_JP850_CHAN_FREQ_MIN_KHZ &&
+				    freq <= MORSE_JP850_CHAN_FREQ_MAX_KHZ) {
+					if ((freq == MORSE_JP850_2MHZ_CHAN_FREQ_KHZ &&
+					     bw == IEEE80211_CHAN_2MHZ) ||
+					    (freq != MORSE_JP850_2MHZ_CHAN_FREQ_KHZ &&
+					     bw == IEEE80211_CHAN_1MHZ))
+						start_freq = MORSE_JP850_START_FREQ_KHZ;
+				} else if ((freq % 1000) == 500) {
 					/* We are on a 500kHz centre */
 					if (bw < 4)
 						start_freq = 922500;
@@ -2225,7 +2648,7 @@ int morse_s1g_get_start_freq_for_country(char *cc, int freq, int bw)
 				}
 				break;
 			case MORSE_KR:
-				start_freq = 917500;
+				start_freq = 917000;
 				break;
 			case MORSE_SG:
 				start_freq = 902000;
@@ -2421,6 +2844,62 @@ static int morse_s1g_chan_get_primary_chan_freq_ht(int s1g_op_bw, int s1g_prim_b
 
 	ht_prim_freq = ieee80211_channel_to_frequency(ht_prim_chan, NL80211_BAND_5GHZ);
 	return ht_prim_freq ? ht_prim_freq : MORSE_S1G_RETURN_ERROR;
+}
+
+int morse_s1g_oper_ie_get_prim_ht_freq(const struct ieee80211_s1g_operation *s1g_oper)
+{
+	char cc[COUNTRY_CODE_LEN];
+	int ht_prim_chan, ht_prim_freq, prim_bw;
+
+	if (!s1g_oper)
+		return MORSE_S1G_RETURN_ERROR;
+
+	if (morse_s1g_op_class_to_country(s1g_oper->s1g_oper_class, cc) != MORSE_SUCCESS)
+		return MORSE_S1G_RETURN_ERROR;
+
+	/* When greater than 1MHz, the primary channel communicated in the S1G operation IE
+	 * does not require context of the wider channel it's embedded within. Translation from
+	 * S1G to HT is performed directly from the channel map. We do not want to apply any
+	 * offsets for overlapping regdoms maintained in morse_s1g_chan_to_ht20_prim_chan().
+	 *
+	 * When the channel is 1MHz, this table alone cannot perform the conversion. This is
+	 * especially true of regdoms where channels overlap. Which HT channel we map to is
+	 * dependent on the wider context of the operating channel it is within.
+	 */
+	prim_bw = morse_s1g_chan_to_bw(s1g_oper->s1g_primary_ch);
+	if (prim_bw > IEEE80211_CHAN_1MHZ)
+		ht_prim_chan = morse_s1g_chan_to_ht_chan(s1g_oper->s1g_primary_ch);
+	else
+		ht_prim_chan = morse_s1g_chan_to_ht20_prim_chan(s1g_oper->s1g_oper_ch,
+								s1g_oper->s1g_primary_ch,
+								cc);
+
+	if (ht_prim_chan <= 0)
+		return MORSE_S1G_RETURN_ERROR;
+
+	ht_prim_freq = ieee80211_channel_to_frequency(ht_prim_chan, NL80211_BAND_5GHZ);
+	return (ht_prim_freq > 0) ? ht_prim_freq : MORSE_S1G_RETURN_ERROR;
+}
+
+int morse_s1g_conf_get_prim_ht_freq(struct hostapd_config *conf)
+{
+	int ht_center_chan, s1g_op_chan, s1g_op_bw, s1g_prim_bw;
+
+	if (!conf)
+		return MORSE_S1G_RETURN_ERROR;
+
+	ht_center_chan = morse_ht_chan_to_ht_chan_center(conf, conf->channel);
+	s1g_op_chan = morse_ht_chan_to_s1g_chan(ht_center_chan);
+	s1g_op_bw = morse_s1g_chan_to_bw(s1g_op_chan);
+	if (s1g_op_bw == MORSE_S1G_RETURN_ERROR)
+		return MORSE_S1G_RETURN_ERROR;
+
+	s1g_prim_bw = (conf->s1g_prim_chwidth == S1G_PRIM_CHWIDTH_2) ?
+		IEEE80211_CHAN_2MHZ : IEEE80211_CHAN_1MHZ;
+
+	return morse_s1g_chan_get_primary_chan_freq_ht(s1g_op_bw, s1g_prim_bw, s1g_op_chan,
+						       conf->s1g_prim_1mhz_chan_index,
+						       conf->op_country);
 }
 
 bool morse_s1g_is_chan_conf_primary_disabled(struct hostapd_config *conf,
@@ -2782,10 +3261,13 @@ int morse_s1g_get_first_center_freq_for_country(char *cc)
 		if (strncmp(ah_country[region], cc, COUNTRY_CODE_LEN) == 0) {
 			switch (region) {
 			case MORSE_AU:
-			/* AR/CL/CO follow AU's REVmf channelization */
 			case MORSE_AR:
 			case MORSE_CL:
 			case MORSE_CO:
+			case MORSE_EC:
+			case MORSE_SV:
+			case MORSE_HT:
+			case MORSE_UY:
 				if (!morse_dot11_2020_channelization_is_in_use())
 					freq = 916000;
 				else
@@ -2798,10 +3280,66 @@ int morse_s1g_get_first_center_freq_for_country(char *cc)
 			case MORSE_CA:
 			case MORSE_US:
 			case MORSE_MX:
+			case MORSE_BS:
+			case MORSE_BB:
+			case MORSE_BZ:
+			case MORSE_CR:
+			case MORSE_GY:
+			case MORSE_HN:
+			case MORSE_JM:
+			case MORSE_NI:
+			case MORSE_PA:
 				freq = 902500;
 				break;
 			case MORSE_EU:
 			case MORSE_GB:
+			case MORSE_AL:
+			case MORSE_AT:
+			case MORSE_BE:
+			case MORSE_BA:
+			case MORSE_BG:
+			case MORSE_HR:
+			case MORSE_CY:
+			case MORSE_CZ:
+			case MORSE_DK:
+			case MORSE_EE:
+			case MORSE_FI:
+			case MORSE_FR:
+			case MORSE_DE:
+			case MORSE_GR:
+			case MORSE_HU:
+			case MORSE_IS:
+			case MORSE_IE:
+			case MORSE_IT:
+			case MORSE_LV:
+			case MORSE_LI:
+			case MORSE_LT:
+			case MORSE_LU:
+			case MORSE_MT:
+			case MORSE_MD:
+			case MORSE_NL:
+			case MORSE_MK:
+			case MORSE_NO:
+			case MORSE_PL:
+			case MORSE_PT:
+			case MORSE_RO:
+			case MORSE_SK:
+			case MORSE_SI:
+			case MORSE_ES:
+			case MORSE_SE:
+			case MORSE_CH:
+			case MORSE_TR:
+			case MORSE_AD:
+			case MORSE_GF:
+			case MORSE_GE:
+			case MORSE_KE:
+			case MORSE_MC:
+			case MORSE_ME:
+			case MORSE_SM:
+			case MORSE_RS:
+			case MORSE_UG:
+			case MORSE_UA:
+			case MORSE_VA:
 				freq = 863500;
 				break;
 			case MORSE_IN:
@@ -2811,7 +3349,7 @@ int morse_s1g_get_first_center_freq_for_country(char *cc)
 				freq = 923000;
 				break;
 			case MORSE_KR:
-				freq = 918000;
+				freq = 917500;
 				break;
 			case MORSE_SG:
 				freq = 917500;
@@ -2946,7 +3484,7 @@ int morse_set_interface(struct hostapd_iface *iface)
 		}
 
 		wpa_printf(MSG_DEBUG, "New S1G op class: %d", op_chan_class->s1g_op_class);
-		iface->conf->s1g_op_class = op_chan_class->s1g_op_class_idx;
+		iface->conf->s1g_op_class = op_chan_class->s1g_op_class;
 
 		oper_freq = morse_s1g_op_class_ht_chan_to_s1g_freq(iface->conf->s1g_op_class,
 								   ht_center_chan);

@@ -600,6 +600,7 @@ size_t int_array_len(const int *a);
 void int_array_concat(int **res, const int *a);
 void int_array_sort_unique(int *a);
 void int_array_add_unique(int **res, int a);
+void int_array_del(int **res, int val);
 bool int_array_includes(const int *arr, int val);
 bool int_array_equal(const int *a, const int *b);
 int * int_array_dup(const int *a);

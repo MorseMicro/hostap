@@ -5043,7 +5043,7 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 /* Validate country, operating class, channel configuration */
 int hostapd_config_s1g_val(struct hostapd_config *conf)
 {
-	int op_class_idx;
+	int s1g_op_class;
 	int channel = 0;
 	int chan_width;
 	int prim_chwidth = 0;
@@ -5056,27 +5056,27 @@ int hostapd_config_s1g_val(struct hostapd_config *conf)
 
 	if (conf->acs) {
 		/* validate op class, country */
-		op_class_idx = morse_s1g_verify_op_class_country(
+		s1g_op_class = morse_s1g_verify_op_class_country(
 				conf->op_class, conf->country, conf->s1g_prim_1mhz_chan_index);
 
 		wpa_printf(MSG_DEBUG, "s1g oper class: %d, validated: %d",
-				conf->op_class, op_class_idx);
+				conf->op_class, s1g_op_class);
 
-		if (op_class_idx < 0) {
+		if (s1g_op_class < 0) {
 			wpa_printf(MSG_ERROR,
 				"Invalid 802.11ah S1G config of oper class and country code");
 			errors++;
 		}
 
 	} else {
-		op_class_idx = morse_s1g_verify_op_class_country_channel(conf->op_class,
+		s1g_op_class = morse_s1g_verify_op_class_country_channel(conf->op_class,
 				conf->country, conf->channel, conf->s1g_prim_1mhz_chan_index);
 
 		wpa_printf(MSG_DEBUG, "s1g oper class: %d, validated: %d",
-				conf->op_class, op_class_idx);
+				conf->op_class, s1g_op_class);
 		wpa_printf(MSG_DEBUG, "s1g channel %u", conf->channel);
 
-		if (op_class_idx < 0) {
+		if (s1g_op_class < 0) {
 			wpa_printf(MSG_ERROR,
 				"Invalid s1g config of oper class, country code and channel");
 			errors++;
@@ -5095,7 +5095,7 @@ int hostapd_config_s1g_val(struct hostapd_config *conf)
 	}
 
 	/* Update the operating class to S1G regional specific */
-	conf->s1g_op_class = (u8)op_class_idx;
+	conf->s1g_op_class = (u8)s1g_op_class;
 
 	/* Reset internal op_class to not trigger other actions */
 	conf->op_class = 0;

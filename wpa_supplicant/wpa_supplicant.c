@@ -2895,6 +2895,16 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 			clear_rejected = false;
 		} else if (wpa_s->current_bss && wpa_s->current_bss != bss) {
 			os_get_reltime(&wpa_s->roam_start);
+
+			/* Notify the AP we are leaving so it releases the STA's
+			 * auth state immediately, avoiding a stale SA Query
+			 * comeback cycle if we roam back. Skipped for FT profiles,
+			 * since an FT reassociation never goes through SA Query.
+			 */
+			if (!wpa_key_mgmt_ft(wpa_s->key_mgmt))
+				wpa_drv_deauthenticate(wpa_s,
+							wpa_s->current_bss->bssid,
+							WLAN_REASON_DEAUTH_LEAVING);
 		}
 	}
 
@@ -3326,7 +3336,8 @@ void morse_ibss_mesh_setup_freq(struct wpa_supplicant *wpa_s,
 				"1MHz primary channel index is too large for operating BW");
 		}
 
-		if (morse_s1g_op_class_valid(conf->s1g_op_class, &op_chan_class)) {
+		if (morse_s1g_op_class_valid(conf->s1g_op_class, &op_chan_class) ==
+		    OP_CLASS_S1G_LOCAL) {
 			if (!wpa_s->driver->set_s1g_op_class) {
 				wpa_printf(MSG_ERROR,
 					"Driver interface not defined for set_s1g_op_class");

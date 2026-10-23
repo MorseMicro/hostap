@@ -295,11 +295,11 @@ int wpa_supplicant_conf_ap_ht(struct wpa_supplicant *wpa_s,
 
 #ifdef CONFIG_IEEE80211AH
 		if (wpa_s->conf->op_class) {
-			int op_class_idx = morse_s1g_verify_op_class_country(
+			int s1g_op_class = morse_s1g_verify_op_class_country(
 					   wpa_s->conf->op_class,
 					   wpa_s->conf->country,
 					   conf->s1g_prim_1mhz_chan_index);
-			if (op_class_idx < 0) {
+			if (s1g_op_class < 0) {
 				conf->s1g_op_class = 0;
 				wpa_printf(MSG_ERROR,
 					   "Failed to determine s1g op class (country=%s op_class=%d s1g_prim_1mhz_chan_index=%d)",
@@ -307,7 +307,7 @@ int wpa_supplicant_conf_ap_ht(struct wpa_supplicant *wpa_s,
 					   wpa_s->conf->op_class,
 					   conf->s1g_prim_1mhz_chan_index);
 			} else
-				conf->s1g_op_class = (u8) op_class_idx;
+				conf->s1g_op_class = (u8) s1g_op_class;
 			wpa_printf(MSG_DEBUG, "s1g op class set: %d", conf->s1g_op_class);
 		} else
 			wpa_printf(MSG_DEBUG, "s1g op class not set: %d", conf->s1g_op_class);

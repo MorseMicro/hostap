@@ -1788,7 +1788,9 @@ struct wpa_config {
 
 	/**
 	 * dpp_chirp_forever - If configured, will initiate chirp, and continue
-	 * until a connection succeeds
+	 * until a connection succeeds. A watchdog restarts chirping whenever
+	 * the device is left unprovisioned and idle - for example after a
+	 * failed DPP exchange.
 	 */
 	int dpp_chirp_forever;
 

@@ -21,7 +21,7 @@
 #endif
 
 #define MORSE_CMD_SEMVER_MAJOR 57
-#define MORSE_CMD_SEMVER_MINOR 13
+#define MORSE_CMD_SEMVER_MINOR 20
 #define MORSE_CMD_SEMVER_PATCH 0
 
 #define MORSE_CMD_TYPE_REQ  BIT(0)
@@ -826,6 +826,7 @@ enum morse_cmd_slow_clock_mode {
  *                                           only).
  * @MORSE_CMD_PARAM_ID_SCAN_INTERVAL_LIMIT_S: Maximum interval between scans when reconnecting
  *                                            (FullMAC only).
+ * @MORSE_CMD_PARAM_ID_AMPDU_FEEDBACK: Enable/Disable feedback for each MPDU in an AMPDU.
  */
 enum morse_cmd_param_id {
 	MORSE_CMD_PARAM_ID_MAX_TRAFFIC_DELIVERY_WAIT_US	  = 0,
@@ -868,7 +869,9 @@ enum morse_cmd_param_id {
 	MORSE_CMD_PARAM_ID_SCAN_INTERVAL_BASE_S = 35,
 	/** Maximum interval between scans when reconnecting (FullMAC only). */
 	MORSE_CMD_PARAM_ID_SCAN_INTERVAL_LIMIT_S = 36,
-	MORSE_CMD_PARAM_ID_LAST			 = 37,
+	/** Enable/Disable feedback for each MPDU in an AMPDU. */
+	MORSE_CMD_PARAM_ID_AMPDU_FEEDBACK = 37,
+	MORSE_CMD_PARAM_ID_LAST		  = 38,
 };
 
 /**

@@ -60,6 +60,151 @@
 
 #define MAX_OWE_TRANSITION_BSS_SELECT_COUNT 5
 
+#ifdef CONFIG_IEEE80211AH
+/**
+ * wpas_get_bss_op_class_from_ie - Get the S1G operating class of the current
+ * BSS from its S1G Operation IE.
+ *
+ * @wpa_s: Pointer to wpa_supplicant data
+ *
+ * Returns: S1G operating class, or MORSE_S1G_RETURN_ERROR.
+ */
+static int wpas_get_bss_op_class_from_ie(struct wpa_supplicant *wpa_s)
+{
+	const struct ieee80211_s1g_operation *s1g_oper;
+	const u8 *ie;
+
+	ie = wpa_bss_get_ie(wpa_s->current_bss, WLAN_EID_S1G_OPERATION);
+	if (!ie)
+		return MORSE_S1G_RETURN_ERROR;
+
+	if (ie[1] < (u8) sizeof(struct ieee80211_s1g_operation)) {
+		wpa_printf(MSG_WARNING,
+			   "Malformed S1G Operation IE from " MACSTR " (len %u, expected >= %u)",
+			   MAC2STR(wpa_s->current_bss->bssid), ie[1],
+			   (unsigned int) sizeof(struct ieee80211_s1g_operation));
+		return MORSE_S1G_RETURN_ERROR;
+	}
+
+	s1g_oper = (const struct ieee80211_s1g_operation *) (ie + 2);
+
+	return s1g_oper->s1g_oper_class;
+}
+
+
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+/**
+ * wpas_get_country - Get the configured country code
+ *
+ * @wpa_s: Pointer to wpa_supplicant data
+ *
+ * The per-network country takes precedence over the global.
+ *
+ * Returns: Country code, or NULL if none is configured.
+ */
+static char * wpas_get_country(struct wpa_supplicant *wpa_s)
+{
+	if (wpa_s->current_ssid && wpa_s->current_ssid->country &&
+	    wpa_s->current_ssid->country[0])
+		return wpa_s->current_ssid->country;
+
+	if (wpa_s->conf && wpa_s->conf->country[0])
+		return wpa_s->conf->country;
+
+	return NULL;
+}
+
+
+/**
+ * wpas_get_bss_op_class_from_freq - Derive the S1G operating class of the
+ * current BSS from its 5 GHz-mapped frequency.
+ *
+ * @wpa_s: Pointer to wpa_supplicant data
+ *
+ * Only used when the op class can't be derived from S1G operation IE.
+ *
+ * Returns: S1G operating class, or MORSE_S1G_RETURN_ERROR if it cannot be derived.
+ */
+static int wpas_get_bss_op_class_from_freq(struct wpa_supplicant *wpa_s)
+{
+	const struct ah_class *class;
+	char *country;
+	int s1g_chan;
+	int s1g_bw;
+
+	country = wpas_get_country(wpa_s);
+	if (!country)
+		return MORSE_S1G_RETURN_ERROR;
+
+	s1g_chan = morse_ht_freq_to_s1g_chan(wpa_s->current_bss->freq, country);
+	if (s1g_chan == MORSE_S1G_RETURN_ERROR)
+		return MORSE_S1G_RETURN_ERROR;
+
+	s1g_bw = morse_s1g_chan_to_bw(s1g_chan);
+	if (s1g_bw == MORSE_S1G_RETURN_ERROR)
+		return MORSE_S1G_RETURN_ERROR;
+
+	class = morse_s1g_ch_to_op_class(s1g_bw, country, s1g_chan, false);
+	if (!class)
+		return MORSE_S1G_RETURN_ERROR;
+
+	return class->s1g_op_class;
+}
+#endif /* CONFIG_MORSE_5GHZ_MAPPED */
+
+
+/**
+ * wpas_current_bss_requires_morse_vendor_ie - Check whether the current BSS
+ * requires the Morse vendor IE during association.
+ *
+ * @wpa_s: Pointer to wpa_supplicant data
+ * @op_class: Pointer to derived S1G operating class
+ *
+ * Returns: true if the current BSS uses a proprietary S1G operating class
+ * that requires the Morse vendor IE, false otherwise.
+ */
+static bool wpas_current_bss_requires_morse_vendor_ie(struct wpa_supplicant *wpa_s, u8 *op_class)
+{
+	const char *source;
+	int s1g_op_class;
+
+	if (!wpa_s->current_bss)
+		return false;
+
+	/*
+	 * Prefer the S1G Operation IE, which carries the operating class directly
+	 * and does not depend on the 5 GHz channel mapping.
+	 */
+	source = "S1G Operation IE";
+	s1g_op_class = wpas_get_bss_op_class_from_ie(wpa_s);
+
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+	if (s1g_op_class == MORSE_S1G_RETURN_ERROR) {
+		source = "mapped frequency";
+		s1g_op_class = wpas_get_bss_op_class_from_freq(wpa_s);
+	}
+#endif /* CONFIG_MORSE_5GHZ_MAPPED */
+
+	if (s1g_op_class == MORSE_S1G_RETURN_ERROR) {
+		wpa_printf(MSG_EXCESSIVE,
+			   "No S1G operating class for " MACSTR
+			   " (freq %d); Morse vendor IE not enforced",
+			   MAC2STR(wpa_s->current_bss->bssid), wpa_s->current_bss->freq);
+		return false;
+	}
+
+	if (!morse_s1g_op_class_requires_morse_vendor_ie(s1g_op_class))
+		return false;
+
+	*op_class = s1g_op_class;
+
+	wpa_printf(MSG_DEBUG, "STA enforce Morse vendor IE: op_class=%u (from %s)",
+		   *op_class, source);
+
+	return true;
+}
+#endif /* CONFIG_IEEE80211AH */
+
 
 #ifndef CONFIG_NO_SCAN_PROCESSING
 static int wpas_select_network_from_last_scan(struct wpa_supplicant *wpa_s,
@@ -3543,8 +3688,23 @@ static int wpa_supplicant_event_associnfo(struct wpa_supplicant *wpa_s,
 		wpa_hexdump(MSG_DEBUG, "req_ies", data->assoc_info.req_ies,
 			    data->assoc_info.req_ies_len);
 	if (data->assoc_info.resp_ies) {
+#ifdef CONFIG_IEEE80211AH
+		u8 s1g_op_class;
+#endif /* CONFIG_IEEE80211AH */
+
 		wpa_hexdump(MSG_DEBUG, "resp_ies", data->assoc_info.resp_ies,
 			    data->assoc_info.resp_ies_len);
+#ifdef CONFIG_IEEE80211AH
+		if (wpas_current_bss_requires_morse_vendor_ie(wpa_s, &s1g_op_class) &&
+		    !get_vendor_ie(data->assoc_info.resp_ies, data->assoc_info.resp_ies_len,
+				   MORSE_VENDOR_IE_CAPS_OPS_VENDOR_TYPE)) {
+			wpa_msg(wpa_s, MSG_ERROR,
+				"Reject association: proprietary S1G operating class %u requires the Morse vendor IE in the assoc response",
+				s1g_op_class);
+			wpa_supplicant_deauthenticate(wpa_s, WLAN_REASON_UNSPECIFIED);
+			return -1;
+		}
+#endif /* CONFIG_IEEE80211AH */
 #ifdef CONFIG_TDLS
 		wpa_tdls_assoc_resp_ies(wpa_s->wpa, data->assoc_info.resp_ies,
 					data->assoc_info.resp_ies_len);

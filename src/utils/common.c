@@ -1030,6 +1030,21 @@ bool int_array_includes(const int *arr, int val)
 }
 
 
+void int_array_del(int **res, int val)
+{
+	size_t i, j;
+
+	if (!res || !*res)
+		return;
+
+	for (i = 0, j = 0; (*res)[i]; i++) {
+		if ((*res)[i] != val)
+			(*res)[j++] = (*res)[i];
+	}
+	(*res)[j] = 0;
+}
+
+
 bool int_array_equal(const int *a, const int *b)
 {
 	size_t alen, blen, i;

@@ -3059,6 +3059,16 @@ void hostapd_dpp_rx_action(struct hostapd_data *hapd, const u8 *src,
 	if (!hapd->iface->interfaces || !hapd->iface->interfaces->dpp)
 		return;
 
+	/* Discard DPP Action frames from devices on adjacent/overlapping
+	 * channels. This is to avoid exchanging DPP offchannel.
+	 */
+	if ((int) freq != hapd->iface->freq) {
+		wpa_printf(MSG_DEBUG, "DPP: ignoring frame from "
+			   MACSTR " freq=%u (!= %d)", MAC2STR(src), freq,
+			   hapd->iface->freq);
+		return;
+	}
+
 	if (len < DPP_HDR_LEN)
 		return;
 	if (WPA_GET_BE24(buf) != OUI_WFA || buf[3] != DPP_OUI_TYPE)

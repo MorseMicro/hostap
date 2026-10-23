@@ -36,6 +36,8 @@
 
 #ifdef CONFIG_DPP2
 #define DEFAULT_CHIRP_FOREVER_START_DELAY_S     (2)
+#define CHIRP_FOREVER_WATCHDOG_INTERVAL_S       (30)
+#define CHIRP_TX_STATUS_TIMEOUT_S               (5)
 #endif
 #ifdef CONFIG_DPP3
 #define PUSH_BUTTON_CHIRP_FOREVER_START_DELAY_S (30)
@@ -2020,6 +2022,13 @@ static void wpas_dpp_gas_resp_cb(void *ctx, const u8 *addr, u8 dialog_token,
 		wpa_printf(MSG_DEBUG, "DPP: GAS query did not succeed (try: %d)",
 			auth->conf_req_tries);
 
+		if (result == GAS_QUERY_DELETED_AT_DEINIT ||
+		    result == GAS_QUERY_STOPPED) {
+			wpa_printf(MSG_DEBUG,
+				   "DPP: GAS query stopped/deinit, not restarting GAS client");
+			goto fail;
+		}
+
 		if (auth->conf_req_tries >= 5)
 			goto fail;
 
@@ -2295,6 +2304,7 @@ static void wpas_dpp_rx_auth_conf(struct wpa_supplicant *wpa_s, const u8 *src,
 				  const u8 *hdr, const u8 *buf, size_t len)
 {
 	struct dpp_authentication *auth = wpa_s->dpp_auth;
+	bool was_awaiting_auth_conf;
 
 	wpa_printf(MSG_DEBUG, "DPP: Authentication Confirmation from " MACSTR,
 		   MAC2STR(src));
@@ -2311,10 +2321,17 @@ static void wpas_dpp_rx_auth_conf(struct wpa_supplicant *wpa_s, const u8 *src,
 		return;
 	}
 
+	/* only ever set on the plain-auth responder path */
+	was_awaiting_auth_conf = auth->waiting_auth_conf;
 	eloop_cancel_timeout(wpas_dpp_auth_conf_wait_timeout, wpa_s, NULL);
 
 	if (dpp_auth_conf_rx(auth, hdr, buf, len) < 0) {
 		wpa_printf(MSG_DEBUG, "DPP: Authentication failed");
+		if (was_awaiting_auth_conf) {
+			offchannel_send_action_done(wpa_s);
+			dpp_auth_deinit(auth);
+			wpa_s->dpp_auth = NULL;
+		}
 		return;
 	}
 
@@ -5093,7 +5110,9 @@ void wpas_dpp_stop(struct wpa_supplicant *wpa_s)
 }
 
 
-static void wpas_dpp_chirp_forever(void *eloop_ctx, void *timeout_ctx);
+static void wpas_dpp_chirp_forever_cb(void *eloop_ctx, void *timeout_ctx);
+static void wpas_dpp_chirp_forever_watchdog_cb(void *eloop_ctx,
+					       void *timeout_ctx);
 static void wpas_dpp_chirp_forever_start_after(struct wpa_supplicant *wpa_s,
 	unsigned int secs);
 
@@ -5183,6 +5202,12 @@ int wpas_dpp_init(struct wpa_supplicant *wpa_s)
 	wpas_dpp_chirp_forever_start_after(wpa_s,
 		DEFAULT_CHIRP_FOREVER_START_DELAY_S);
 #endif /* CONFIG_DPP2 && !MM_IOT_DPP_DISABLE_CONFIG_KEY */
+#ifdef CONFIG_DPP2
+	if (wpa_s->dpp)
+		eloop_register_timeout(CHIRP_FOREVER_WATCHDOG_INTERVAL_S, 0,
+				       wpas_dpp_chirp_forever_watchdog_cb,
+				       wpa_s, NULL);
+#endif /* CONFIG_DPP2 */
 	return wpa_s->dpp ? 0 : -1;
 }
 
@@ -5211,6 +5236,8 @@ void wpas_dpp_deinit(struct wpa_supplicant *wpa_s)
 	eloop_cancel_timeout(wpas_dpp_tx_auth_resp_roc_timeout, wpa_s, NULL);
 	eloop_cancel_timeout(wpas_dpp_neg_freq_timeout, wpa_s, NULL);
 #ifdef CONFIG_DPP2
+	eloop_cancel_timeout(wpas_dpp_chirp_forever_cb, wpa_s, NULL);
+	eloop_cancel_timeout(wpas_dpp_chirp_forever_watchdog_cb, wpa_s, NULL);
 	eloop_cancel_timeout(wpas_dpp_config_result_wait_timeout, wpa_s, NULL);
 	eloop_cancel_timeout(wpas_dpp_conn_status_result_wait_timeout,
 			     wpa_s, NULL);
@@ -5364,13 +5391,44 @@ int wpas_dpp_controller_start(struct wpa_supplicant *wpa_s, const char *cmd)
 
 static void wpas_dpp_chirp_next(void *eloop_ctx, void *timeout_ctx);
 
+static void wpas_dpp_chirp_abort(struct wpa_supplicant *wpa_s,
+				 const char *reason)
+{
+	wpa_printf(MSG_DEBUG, "DPP: %s", reason);
+	offchannel_send_action_done(wpa_s);
+	wpas_dpp_chirp_next(wpa_s, NULL);
+}
+
+
 static void wpas_dpp_chirp_timeout(void *eloop_ctx, void *timeout_ctx)
 {
 	struct wpa_supplicant *wpa_s = eloop_ctx;
 
-	wpa_printf(MSG_DEBUG, "DPP: No chirp response received");
-	offchannel_send_action_done(wpa_s);
-	wpas_dpp_chirp_next(wpa_s, NULL);
+	wpas_dpp_chirp_abort(wpa_s, "No chirp response received");
+}
+
+
+static void wpas_dpp_chirp_tx_status_timeout(void *eloop_ctx, void *timeout_ctx)
+{
+	struct wpa_supplicant *wpa_s = eloop_ctx;
+
+	if (wpa_s->roc_waiting_drv_freq &&
+	    wpa_s->roc_waiting_drv_freq == wpa_s->pending_action_freq) {
+		/* The chirp has not been handed to the driver yet (e.g., the
+		 * radio is still busy with a scan), so no TX status can have
+		 * been generated - keep waiting rather than cancelling a
+		 * frame that was never transmitted.
+		 */
+		wpa_printf(MSG_DEBUG,
+			   "DPP: Chirp waiting for the driver to reach %u MHz",
+			   wpa_s->roc_waiting_drv_freq);
+		eloop_register_timeout(CHIRP_TX_STATUS_TIMEOUT_S, 0,
+				       wpas_dpp_chirp_tx_status_timeout,
+				       wpa_s, NULL);
+		return;
+	}
+
+	wpas_dpp_chirp_abort(wpa_s, "No TX status received for chirp");
 }
 
 
@@ -5381,6 +5439,8 @@ static void wpas_dpp_chirp_tx_status(struct wpa_supplicant *wpa_s,
 				     const u8 *data, size_t data_len,
 				     enum offchannel_send_action_result result)
 {
+	eloop_cancel_timeout(wpas_dpp_chirp_tx_status_timeout, wpa_s, NULL);
+
 	if (result == OFFCHANNEL_SEND_ACTION_FAILED) {
 		wpa_printf(MSG_DEBUG, "DPP: Failed to send chirp on %d.%03d MHz",
 			   freq, freq_offset);
@@ -5435,13 +5495,16 @@ static void wpas_dpp_chirp_start(struct wpa_supplicant *wpa_s)
 		    wpa_s, freq, freq_offset, broadcast,
 		    wpa_s->own_addr, broadcast,
 		    wpabuf_head(msg), wpabuf_len(msg),
-		    2000, wpas_dpp_chirp_tx_status, 0) < 0)
+		    2000, wpas_dpp_chirp_tx_status, 0) < 0 ||
+	    eloop_register_timeout(CHIRP_TX_STATUS_TIMEOUT_S, 0,
+				   wpas_dpp_chirp_tx_status_timeout,
+				   wpa_s, NULL) < 0)
 		wpas_dpp_chirp_stop(wpa_s);
 
 	wpabuf_free(announce);
 }
 
-static void log_dpp_presence_ann_channels(int *freqs_khz)
+static void log_dpp_presence_ann_channels(struct wpa_supplicant *wpa_s, int *freqs_khz)
 {
 	int i;
 	int n_freqs;
@@ -5454,7 +5517,8 @@ static void log_dpp_presence_ann_channels(int *freqs_khz)
 	for (i = 0; i < n_freqs; i++) {
 		int freq = freqs_khz[i] / 1000;
 #ifdef CONFIG_MORSE_5GHZ_MAPPED
-		int chan_s1g = morse_ht_freq_to_s1g_chan(freq, NULL);
+		char *country = wpa_s->conf ? wpa_s->conf->country : NULL;
+		int chan_s1g = morse_ht_freq_to_s1g_chan(freq, country);
 		int op_bw_s1g = morse_s1g_chan_to_bw(chan_s1g);
 
 		wpa_printf(MSG_DEBUG, "DPP:    [%d] %d MHz (S1G operating:%d MHz)", chan_s1g,
@@ -5553,17 +5617,87 @@ static int * wpas_dpp_presence_ann_channels(struct wpa_supplicant *wpa_s,
 	return freqs_khz;
 }
 
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+/* Get full S1G primary channel width of a BSS (if known) */
+static int wpas_dpp_override_5g_s1g_frequency(const struct wpa_bss *bss, int freq_khz)
+{
+	int ret;
+	const u8 *ie = wpa_bss_get_ie(bss, WLAN_EID_S1G_OPERATION);
+
+	if (!ie)
+		goto exit;
+
+	if (ie[1] < (u8) sizeof(struct ieee80211_s1g_operation))
+		goto exit;
+
+	ret = morse_s1g_oper_ie_get_prim_ht_freq((const struct ieee80211_s1g_operation *) (ie + 2));
+	if (ret <= 0)
+		goto exit;
+
+	freq_khz = ret * 1000;
+exit:
+	return freq_khz;
+}
+#endif
+
 static void wpas_dpp_presence_ann_append_scan_results(struct wpa_supplicant *wpa_s, int **freqs_khz)
 {
 	struct wpa_bss *bss;
+#if defined(CONFIG_MORSE_5GHZ_MAPPED)
+	char *country = wpa_s->conf ? wpa_s->conf->country : NULL;
+	int prim_on_preferred = 0;
+	int prim_contains_preferred = 0;
+	int preferred_s1g_ht_freq_khz;
+
+	preferred_s1g_ht_freq_khz = wpas_s1g_preferred_ht_announce_freq(wpa_s);
+	if (preferred_s1g_ht_freq_khz > 0)
+		preferred_s1g_ht_freq_khz *= 1000;
+#endif
 
 	/* Add channels from scan results for APs that advertise Configurator
 	 * Connectivity element */
 	dl_list_for_each(bss, &wpa_s->bss, struct wpa_bss, list) {
-		if (wpa_bss_get_vendor_ie(bss, DPP_CC_IE_VENDOR_TYPE))
-			int_array_add_unique(freqs_khz,
-					     bss->freq * 1000 + bss->freq_offset);
+		if (wpa_bss_get_vendor_ie(bss, DPP_CC_IE_VENDOR_TYPE)) {
+			int freq_khz = bss->freq * 1000 + bss->freq_offset;
+
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+			/* Scan results are always reported on the 1MHz primary index channel,
+			 * even if the full width of the primary channel is 2MHz. Override
+			 * to the full width primary channel.
+			 */
+			int override_khz = wpas_dpp_override_5g_s1g_frequency(bss, freq_khz);
+
+			if (morse_ht_freq_to_s1g_chan(override_khz / 1000, country) < 0)
+				continue;
+
+			if (preferred_s1g_ht_freq_khz > 0 &&
+			    preferred_s1g_ht_freq_khz == freq_khz)
+				prim_contains_preferred++;
+
+			if (preferred_s1g_ht_freq_khz > 0 &&
+			    preferred_s1g_ht_freq_khz == override_khz)
+				prim_on_preferred++;
+
+			freq_khz = override_khz;
+#endif
+			int_array_add_unique(freqs_khz, freq_khz);
+		}
 	}
+
+#ifdef CONFIG_MORSE_5GHZ_MAPPED
+	/* As per "6.2.2 Generation of Channel List for Presence Announcement -
+	 * Wi-Fi Easy Connect Specification v2.0.0.6.", duplicate channels should
+	 * be removed from the list (step 4).
+	 *
+	 * The preferred S1G channel may appear as the 1MHz subchannel of a BSSes
+	 * 2MHz primary channel. When this happens, and the channel
+	 * is not equal to the full primary channel of another BSS, the
+	 * preferred channel should be removed from the list. This is to avoid
+	 * duplicate annoucement sessions for a given BSS.
+	 */
+	if (!prim_on_preferred && prim_contains_preferred)
+		int_array_del(freqs_khz, preferred_s1g_ht_freq_khz);
+#endif
 }
 
 static void wpas_dpp_chirp_scan_res_handler(struct wpa_supplicant *wpa_s,
@@ -5579,7 +5713,7 @@ static void wpas_dpp_chirp_scan_res_handler(struct wpa_supplicant *wpa_s,
 	os_free(wpa_s->dpp_chirp_freqs_khz);
 	wpa_s->dpp_chirp_freqs_khz = wpas_dpp_presence_ann_channels(wpa_s, bi);
 	wpas_dpp_presence_ann_append_scan_results(wpa_s, &wpa_s->dpp_chirp_freqs_khz);
-	log_dpp_presence_ann_channels(wpa_s->dpp_chirp_freqs_khz);
+	log_dpp_presence_ann_channels(wpa_s, wpa_s->dpp_chirp_freqs_khz);
 
 	if (!wpa_s->dpp_chirp_freqs_khz ||
 	    eloop_register_timeout(0, 0, wpas_dpp_chirp_next, wpa_s, NULL) < 0)
@@ -5668,16 +5802,73 @@ static void wpas_dpp_chirp_next(void *eloop_ctx, void *timeout_ctx)
 }
 
 
-static void wpas_dpp_chirp_forever(void *eloop_ctx, void *timeout_ctx) {
-	struct wpa_supplicant *wpa_s = eloop_ctx;
-	(void)wpas_dpp_chirp(wpa_s, "dpp_chirp own=1");
-	return;
+static int wpas_dpp_chirp_forever(struct wpa_supplicant *wpa_s)
+{
+	if (!wpa_s->conf->dpp_chirp_forever || wpa_s->conf->ssid)
+		return 0; /* chirp forever disabled and/or in provisioned state */
+
+	eloop_cancel_timeout(wpas_dpp_chirp_forever_cb, wpa_s, NULL);
+	return wpas_dpp_chirp(wpa_s, "dpp_chirp own=1");
+}
+
+/*
+ * One-shot: fires once, a fixed delay after wpas_dpp_init()/push button/
+ * bootstrap generation, to kick off the very first round of chirping.
+ */
+static void wpas_dpp_chirp_forever_cb(void *eloop_ctx, void *timeout_ctx)
+{
+	(void) wpas_dpp_chirp_forever((struct wpa_supplicant *)eloop_ctx);
 }
 
 static void wpas_dpp_chirp_forever_start_after(struct wpa_supplicant *wpa_s,
-	unsigned int secs) {
-	if (wpa_s->conf->dpp_chirp_forever && !wpa_s->conf->ssid)
-		eloop_register_timeout(secs, 0,  wpas_dpp_chirp_forever, wpa_s, NULL);
+	unsigned int secs)
+{
+	eloop_register_timeout(secs, 0,  wpas_dpp_chirp_forever_cb, wpa_s, NULL);
+}
+
+/*
+ * Periodic fallback: This is invoked every CHIRP_FOREVER_WATCHDOG_INTERVAL_S
+ * seconds for the lifetime of the interface and restarts chirping whenever
+ * an unprovisioned device is idle.
+ */
+static void wpas_dpp_chirp_forever_watchdog_cb(void *eloop_ctx, void *timeout_ctx)
+{
+	int ret;
+	struct wpa_supplicant *wpa_s = eloop_ctx;
+
+	if (!wpa_s->dpp || !wpa_s->conf->dpp_chirp_forever || wpa_s->conf->ssid)
+		return;
+
+	if (wpa_s->dpp_auth) {
+		wpa_printf(MSG_DEBUG,
+			   "DPP: Watchdog: DPP exchange in progress");
+		goto rearm;
+	}
+
+	if (wpa_s->dpp_pkex || wpa_s->dpp_pkex_wait_auth_req) {
+		wpa_printf(MSG_DEBUG,
+			   "DPP: Watchdog: PKEX bootstrapping in progress");
+		goto rearm;
+	}
+
+#ifdef CONFIG_DPP3
+	if (wpa_s->dpp_pb_announcement) {
+		wpa_printf(MSG_DEBUG,
+			   "DPP: Watchdog: push button session in progress");
+		goto rearm;
+	}
+#endif /* CONFIG_DPP3 */
+
+	if (wpa_s->dpp_presence_announcement)
+		goto rearm; /* already chirping */
+
+	ret = wpas_dpp_chirp_forever(wpa_s);
+	wpa_printf((ret == 0) ? MSG_INFO : MSG_ERROR,
+		   "DPP: Watchdog: restarting chirp forever%s",
+		   (ret == 0) ? "" : " failed");
+rearm:
+	eloop_register_timeout(CHIRP_FOREVER_WATCHDOG_INTERVAL_S, 0,
+			       wpas_dpp_chirp_forever_watchdog_cb, wpa_s, NULL);
 }
 
 int wpas_dpp_chirp(struct wpa_supplicant *wpa_s, const char *cmd)
@@ -5750,6 +5941,7 @@ void wpas_dpp_chirp_stop(struct wpa_supplicant *wpa_s)
 	wpa_s->dpp_chirp_freqs_khz = NULL;
 	eloop_cancel_timeout(wpas_dpp_chirp_next, wpa_s, NULL);
 	eloop_cancel_timeout(wpas_dpp_chirp_timeout, wpa_s, NULL);
+	eloop_cancel_timeout(wpas_dpp_chirp_tx_status_timeout, wpa_s, NULL);
 	if (wpa_s->scan_res_handler == wpas_dpp_chirp_scan_res_handler) {
 		wpas_abort_ongoing_scan(wpa_s);
 		wpa_s->scan_res_handler = NULL;
@@ -6162,7 +6354,7 @@ static void wpas_dpp_pb_scan_res_handler(struct wpa_supplicant *wpa_s,
 	}
 
 	wpa_s->dpp_pb_scan_retries = 0;
-	log_dpp_presence_ann_channels(wpa_s->dpp_pb_freqs_khz);
+	log_dpp_presence_ann_channels(wpa_s, wpa_s->dpp_pb_freqs_khz);
 
 	wpa_printf(MSG_DEBUG, "DPP: Scan completed for PB discovery");
 	if (!wpa_s->dpp_pb_freqs_khz ||
@@ -6180,7 +6372,7 @@ int wpas_dpp_push_button(struct wpa_supplicant *wpa_s, const char *cmd)
 
 	wpas_dpp_stop(wpa_s);
 	wpas_dpp_chirp_stop(wpa_s);
-	eloop_cancel_timeout(wpas_dpp_chirp_forever, ELOOP_ALL_CTX, ELOOP_ALL_CTX);
+	eloop_cancel_timeout(wpas_dpp_chirp_forever_cb, ELOOP_ALL_CTX, ELOOP_ALL_CTX);
 
 	os_get_reltime(&wpa_s->dpp_pb_time);
 
@@ -6298,6 +6490,8 @@ void wpas_dpp_push_button_stop(struct wpa_supplicant *wpa_s)
 		wpas_abort_ongoing_scan(wpa_s);
 		wpa_s->scan_res_handler = NULL;
 	}
+
+	offchannel_send_action_done(wpa_s);
 
 	wpas_dpp_chirp_forever_start_after(wpa_s,
 		PUSH_BUTTON_CHIRP_FOREVER_START_DELAY_S);

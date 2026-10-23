@@ -20,8 +20,13 @@ struct wpa_supplicant;
 #define MORSE_INVALID_CHANNEL (-2)
 #define MORSE_SUCCESS (0)
 /** The maximum number of country codes that can be assigned to an S1G class */
-#define COUNTRY_CODE_MAX (4)
+#define COUNTRY_CODE_MAX (50)
 #define COUNTRY_CODE_LEN (2)
+#define S1G_CHAN_COUNT (97)	/* JP850 chan 96 is the highest of any regulatory */
+#define S1G_CHAN_MIN (1L)
+#define S1G_CHAN_MAX (S1G_CHAN_COUNT - 1L)
+
+/* Channels above 63 don't fit, use morse_s1g_op_class_has_channel() for those */
 #define S1G_CHAN_ENABLED_FLAG(ch) (1LLU << (ch))
 #define NUMBER_OF_BITS(x) (sizeof(x) * 8)
 
@@ -33,13 +38,29 @@ struct wpa_supplicant;
 #define MORSE_JP_HT20_NON_OVERLAP_CHAN_END 60
 #define MORSE_JP_S1G_NON_OVERLAP_CHAN 21
 
+/* JP850 transition channels */
+#define MORSE_JP850_CHAN_MIN 94
+#define MORSE_JP850_2MHZ_CHAN 95
+#define MORSE_JP850_START_FREQ_KHZ 800000
+#define MORSE_JP850_1MHZ_OP_CLASS 195
+#define MORSE_JP850_2MHZ_OP_CLASS 196
+#define MORSE_JP850_CHAN_FREQ_MIN_KHZ 847000
+#define MORSE_JP850_2MHZ_CHAN_FREQ_KHZ 847500
+#define MORSE_JP850_CHAN_FREQ_MAX_KHZ 848000
+
 #define S1G_OP_CLASS_IE_LEN 3 /* eid + ie len + op class */
+/* One past the highest currently defined S1G operating class number (196, JP850 2MHz) */
+#define S1G_OP_CLASS_TABLE_LEN 197
 extern unsigned int S1G_OP_CLASSES_LEN;
 
 /* Define Maximum interfaces supported for MBSSID IE */
 #define MBSSID_MAX_INTERFACES 2
 
 #define MORSE_OUI	0x0CBF74
+/* Morse caps/ops vendor IE to identify AP/STA is a Morse device */
+#define MORSE_VENDOR_IE_CAPS_OPS_OUI_TYPE 0
+#define MORSE_VENDOR_IE_CAPS_OPS_VENDOR_TYPE \
+	((MORSE_OUI << 8) | MORSE_VENDOR_IE_CAPS_OPS_OUI_TYPE)
 
 #define RAW_PRIORITY_GROUP_MAX  (7)
 #define RAW_GROUP_SIZE          (256)
@@ -78,15 +99,29 @@ enum morse_vendor_attributes {
 	MORSE_VENDOR_ATTR_MGMT_FRAME_TYPE = 1,
 };
 
+/**
+ * Per-country channel subset for an S1G class. Used when one or more countries that
+ * share the same operating class permit a subset of its channels (e.g. EU/GB vs IN on
+ * class 6). All countries listed in cc_list share the same channel subset.
+ */
+struct ah_class_cc_chan_subset {
+	char cc_list[COUNTRY_CODE_MAX][COUNTRY_CODE_LEN];
+	u64 chans;
+};
+
 struct ah_class {
 	u32 s1g_freq_start;
 	u8 s1g_op_class;
-	/* Array index to select class based on regdomain */
-	u8 s1g_op_class_idx;
 	u8 global_op_class;
 	u8 s1g_width;
 	char cc_list[COUNTRY_CODE_MAX][COUNTRY_CODE_LEN];
+	/* Default channel bitmap, used for any country without a cc_chan_subset entry */
 	u64 chans;
+	/* Channels above 63, which don't fit in chans */
+	const u8 *extra_chans;
+	u8 extra_chans_len;
+	/* Optional per-country channel subset; unused when its cc_list is empty */
+	struct ah_class_cc_chan_subset cc_chan_subset;
 };
 
 struct morse_twt {
@@ -121,6 +156,66 @@ enum morse_dot11ah_region {
 	MORSE_AR,
 	MORSE_CL,
 	MORSE_CO,
+	MORSE_AL,
+	MORSE_AT,
+	MORSE_BE,
+	MORSE_BA,
+	MORSE_BG,
+	MORSE_HR,
+	MORSE_CY,
+	MORSE_CZ,
+	MORSE_DK,
+	MORSE_EE,
+	MORSE_FI,
+	MORSE_FR,
+	MORSE_DE,
+	MORSE_GR,
+	MORSE_HU,
+	MORSE_IS,
+	MORSE_IE,
+	MORSE_IT,
+	MORSE_LV,
+	MORSE_LI,
+	MORSE_LT,
+	MORSE_LU,
+	MORSE_MT,
+	MORSE_MD,
+	MORSE_NL,
+	MORSE_MK,
+	MORSE_NO,
+	MORSE_PL,
+	MORSE_PT,
+	MORSE_RO,
+	MORSE_SK,
+	MORSE_SI,
+	MORSE_ES,
+	MORSE_SE,
+	MORSE_CH,
+	MORSE_TR,
+	MORSE_AD,
+	MORSE_GF,
+	MORSE_GE,
+	MORSE_KE,
+	MORSE_MC,
+	MORSE_ME,
+	MORSE_SM,
+	MORSE_RS,
+	MORSE_UG,
+	MORSE_UA,
+	MORSE_VA,
+	MORSE_BS,
+	MORSE_BB,
+	MORSE_BZ,
+	MORSE_CR,
+	MORSE_GY,
+	MORSE_HN,
+	MORSE_JM,
+	MORSE_NI,
+	MORSE_PA,
+	MORSE_EC,
+	MORSE_SV,
+	MORSE_HT,
+	MORSE_UY,
 	REGION_UNSET = 0xFF,
 };
 
@@ -211,6 +306,40 @@ int morse_s1g_freq_and_cc_to_ht_freq(int s1g_frequency, const char *cc);
 /* Return the first valid channel from an s1g operating class */
 int morse_s1g_op_class_first_chan(u8 s1g_op_class);
 
+/**
+ * morse_s1g_op_class_chans_for_cc - Resolve the channel bitmap for a class within a country
+ *
+ * @class: S1G class structure
+ * @cc:    country code
+ *
+ * Return: The per country channel list
+ */
+u64 morse_s1g_op_class_chans_for_cc(const struct ah_class *class, const char *cc);
+
+/**
+ * morse_s1g_op_class_requires_morse_vendor_ie - Check if a class needs the Morse vendor IE
+ *
+ * @op_class: S1G operating class
+ *
+ * The JP850 classes are proprietary, so only associate with a peer that identifies as Morse.
+ *
+ * Return: true if the operating class requires the Morse vendor IE
+ */
+bool morse_s1g_op_class_requires_morse_vendor_ie(u8 op_class);
+
+/**
+ * morse_s1g_op_class_has_channel - Check if a channel belongs to an S1G class in a country
+ *
+ * @class:    S1G class structure
+ * @cc:       country code, or NULL for the class default channels
+ * @s1g_chan: S1G channel number
+ *
+ * Use this rather than S1G_CHAN_ENABLED_FLAG(), it also covers extra_chans.
+ *
+ * Return: true if the channel belongs to the class
+ */
+bool morse_s1g_op_class_has_channel(const struct ah_class *class, const char *cc, int s1g_chan);
+
 /* Returns the center channel, taking into account VHT channel offsets */
 int morse_ht_chan_to_ht_chan_center(struct hostapd_config *conf, int ht_chan);
 
@@ -241,6 +370,29 @@ int morse_s1g_validate_csa_params(struct hostapd_iface *iface, struct csa_settin
  */
 int morse_convert_s1g_freq_to_ht_freq(int s1g_freq, const char *country);
 
+/**
+ * morse_s1g_oper_ie_get_primary_ht_freq() - Derive the 5 GHz-mapped frequency of
+ * the S1G primary channel directly from the S1G Operation element.
+ *
+ * @s1g_oper: Parsed S1G Operation element body; caller must verify length
+ *            >= sizeof(struct ieee80211_s1g_operation).
+ *
+ * Returns the primary channel's 5 GHz-mapped center frequency (MHz), or
+ * MORSE_S1G_RETURN_ERROR on failure.
+ */
+int morse_s1g_oper_ie_get_prim_ht_freq(const struct ieee80211_s1g_operation *s1g_oper);
+
+/**
+ * morse_s1g_conf_get_prim_ht_freq() - Derive the 5 GHz-mapped frequency of
+ * the AP's S1G primary channel from its running hostapd configuration.
+ *
+ * @conf: AP hostapd_config; must not be NULL.
+ *
+ * Returns the primary channel's 5 GHz-mapped center frequency (MHz), or
+ * MORSE_S1G_RETURN_ERROR on failure.
+ */
+int morse_s1g_conf_get_prim_ht_freq(struct hostapd_config *conf);
+
 /*
  * Get the lowest center frequency for a given country.
  */
@@ -258,6 +410,24 @@ int morse_s1g_get_primary_channel(struct hostapd_config *conf, int bw);
  * Returns: True if alpha matches a country with multiple channelization.
  */
 bool morse_is_multi_channelization_country(const char *alpha);
+
+/**
+ * morse_is_revmf_channelization_country() - Check if country only supports REVmf channelization
+ *
+ * @alpha: Country code
+ *
+ * Returns: True if alpha matches a country that only supports REVmf channelization.
+ */
+bool morse_is_revmf_channelization_country(const char *alpha);
+
+/**
+ * morse_cc_uses_au_channelization() - Check if country follows AU channelization.
+ *
+ * @alpha: Country code
+ *
+ * Returns: True if alpha matches a country that supports AU channelization.
+ */
+bool morse_cc_uses_au_channelization(const char *alpha);
 
 /**
  * morse_dot11_2020_channelization_is_in_use() - Check if 802.11-2020 channelization is in use
@@ -335,13 +505,19 @@ int morse_insert_supported_op_class(struct wpabuf *buf, char *cc, int s1g_chwidt
 /**
  * morse_s1g_chan_to_ht20_prim_chan() - Convert S1G Primary channel to HT20 channel.
  *
+ * Applies the country-specific overlap-channel offset that resolves where a primary channel
+ * sits within a wider operating channel it's embedded in. Maps @s1g_prim_channel directly (no
+ * offset) when it equals @s1g_op_channel, since a full-width primary has no narrower position
+ * to disambiguate. Some callers bypass this function entirely for other reasons -- see
+ * morse_s1g_oper_ie_get_prim_ht_freq().
+ *
  * @s1g_op_channel: S1G Operating Channel
- * @s1g_prim_1MHz_channel: S1G 1MHz primary channel
+ * @s1g_prim_channel: S1G primary channel
  * @cc: Country code
  *
- * Returns: HT20 Channel if mapping is successful, 0 otherwise
+ * Returns: HT20 Channel if mapping is successful, MORSE_S1G_RETURN_ERROR otherwise
  */
-int morse_s1g_chan_to_ht20_prim_chan(int s1g_op_channel, int s1g_prim_1MHz_channel, char *cc);
+int morse_s1g_chan_to_ht20_prim_chan(int s1g_op_channel, int s1g_prim_channel, char *cc);
 
 /**
  * morse_s1g_get_start_freq_for_country() - Get starting frequency for given country.
@@ -439,8 +615,9 @@ int morse_calculate_primary_s1g_channel_jp(int op_bw_mhz, int pr_bw_mhz, int s1g
  *
  * @param sec_chan_offset	Secondary channel offset flag
  * @param cc			Pointer to country code
+ * @param s1g_chan		S1G channel the offset applies to
  */
-int morse_cc_get_sec_channel_offset(int sec_chan_offset, char *cc);
+int morse_cc_get_sec_channel_offset(int sec_chan_offset, char *cc, int s1g_chan);
 
 /**
  * Remove duplicate entries and sort buffer

@@ -579,12 +579,12 @@ size_t wpas_supp_s1g_op_class_ie(struct wpa_supplicant *wpa_s,
 
 		sec_chan_offset = ht_oper->ht_param &
 				HT_INFO_HT_PARAM_SECONDARY_CHNL_OFF_MASK;
-		sec_chan = morse_cc_get_sec_channel_offset(sec_chan_offset, country);
 		ht_chan = ht_oper->primary_chan;
 		if(strncmp(country, "JP", COUNTRY_CODE_LEN) == 0)
 			ht_chan -= morse_ht_chan_offset_jp(ht_chan, MORSE_INVALID_CHANNEL, 1);
 
 		s1g_op_chan = morse_ht_chan_to_s1g_chan(ht_chan);
+		sec_chan = morse_cc_get_sec_channel_offset(sec_chan_offset, country, s1g_op_chan);
 	}
 #endif /* CONFIG_MORSE_5GHZ_MAPPED */
 

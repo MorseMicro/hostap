@@ -686,12 +686,12 @@ out:
 }
 
 #ifdef CONFIG_MORSE_5GHZ_MAPPED
-static int get_num_of_channels(const struct ah_class *class)
+static int get_num_of_channels(const struct ah_class *class, const char *cc)
 {
 	int chan_num = 0;
 
-	for (int i = 0; i < (int) NUMBER_OF_BITS(class->chans); i++) {
-		if (class->chans & S1G_CHAN_ENABLED_FLAG(i))
+	for (int i = S1G_CHAN_MIN; i <= S1G_CHAN_MAX; i++) {
+		if (morse_s1g_op_class_has_channel(class, cc, i))
 			chan_num++;
 	}
 	return chan_num;
@@ -742,11 +742,10 @@ static int * add_single_s1g_to_ht_freq(int chan, int bss_freq)
 	return NULL;
 }
 
-static int * get_s1g_to_ht_frequency_list(const struct ah_class *class)
+static int * get_s1g_to_ht_frequency_list(const struct ah_class *class, const char *cc)
 {
 	int *freq_list;
-	/* Get number of channels in the class*/
-	int num_channels = get_num_of_channels(class);
+	int num_channels = get_num_of_channels(class, cc);
 	int freq_added = 0;
 
 	/* one extra place for the zero-terminator */
@@ -756,8 +755,8 @@ static int * get_s1g_to_ht_frequency_list(const struct ah_class *class)
 		return NULL;
 	}
 
-	for (int ch = 0; ch < (int) NUMBER_OF_BITS(class->chans); ch++) {
-		if (class->chans & S1G_CHAN_ENABLED_FLAG(ch)) {
+	for (int ch = S1G_CHAN_MIN; ch <= S1G_CHAN_MAX; ch++) {
+		if (morse_s1g_op_class_has_channel(class, cc, ch)) {
 			int freq = morse_s1g_chan_to_ht_chan(ch);
 			freq_list[freq_added] = ieee80211_channel_to_frequency(freq, NL80211_BAND_5GHZ);
 			if (freq_list[freq_added] < 0) {
@@ -802,14 +801,20 @@ static int * wpas_beacon_request_freqs(struct wpa_supplicant *wpa_s,
 #ifdef CONFIG_MORSE_5GHZ_MAPPED
 	/* The below is used when beacon report request uses S1G information */
 	const struct ah_class *class;
-	if (morse_s1g_op_class_valid(op_class, &class) != OP_CLASS_INVALID) {
+	enum s1g_op_class_type op_class_type = morse_s1g_op_class_valid(op_class, &class);
+
+	if (op_class_type != OP_CLASS_INVALID) {
 		wpa_printf(MSG_DEBUG, "rrm got op class: %d and chan: %d", op_class, chan);
 		wpa_s->s1g_rrm_op_class = op_class;
 		switch (chan) {
 		case 0:
-			if (!class)
+			if (op_class_type != OP_CLASS_S1G_LOCAL || !class) {
+				wpa_printf(MSG_ERROR,
+					   "Beacon request: channel enumeration not supported for non-local S1G op class %d",
+					   op_class);
 				return NULL;
-			freqs = get_s1g_to_ht_frequency_list(class);
+			}
+			freqs = get_s1g_to_ht_frequency_list(class, country);
 			if (!freqs)
 				return NULL;
 			break;
