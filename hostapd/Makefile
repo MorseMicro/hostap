@@ -46,7 +46,7 @@ endif
 endif
 
 # This line used by packaging scripts - do not change
-MORSE_VERSION ?= rel_mm6108_2_2_2_2026_Sep_23
+MORSE_VERSION ?= rel_mm8108_2_2_3_2026_Oct_13
 ifdef MORSE_VERSION
 CFLAGS += -DMORSE_VERSION_STR=\"$(MORSE_VERSION)\"
 endif
